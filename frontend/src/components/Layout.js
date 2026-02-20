@@ -70,6 +70,7 @@ export default function Layout({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const navItems = NAV_BY_ROLE[user?.role] || NAV_BY_ROLE.receptionist;
   const handleLogout = () => { logout(); navigate('/login'); };
@@ -81,7 +82,7 @@ export default function Layout({ children }) {
 
   return (
     <div className={styles.layout}>
-      <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''}`}>
+      <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''} ${mobileOpen ? styles.mobileOpen : ''}`}>
         <div className={styles.logo}>
           <span className={styles.logoIcon}>🏥</span>
           {!collapsed && <span className={styles.logoText}>MediSchedule</span>}
@@ -91,6 +92,7 @@ export default function Layout({ children }) {
             <Link
               key={item.path}
               to={item.path}
+              onClick={() => setMobileOpen(false)}
               className={`${styles.navItem} ${isActive(item.path) ? styles.active : ''}`}
             >
               <span className={styles.navIcon}>{item.icon}</span>
@@ -102,11 +104,15 @@ export default function Layout({ children }) {
           {collapsed ? '→' : '←'}
         </button>
       </aside>
+      {mobileOpen && <button className={styles.backdrop} onClick={() => setMobileOpen(false)} aria-label="Close menu" />}
 
       <div className={styles.main}>
         <header className={styles.header}>
-          <div className={styles.headerTitle}>
-            {navItems.find(n => isActive(n.path))?.label || 'MediSchedule'}
+          <div className={styles.headerLeft}>
+            <button className={styles.menuBtn} onClick={() => setMobileOpen((v) => !v)} aria-label="Open menu">☰</button>
+            <div className={styles.headerTitle}>
+              {navItems.find(n => isActive(n.path))?.label || 'MediSchedule'}
+            </div>
           </div>
           <div className={styles.headerRight}>
             <span className={styles.userBadge}>

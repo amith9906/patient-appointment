@@ -39,3 +39,25 @@
 .apptInfo { flex: 1; }
 .apptPatient { font-weight: 600; font-size: 14px; color: #1e293b; }
 .apptDoctor { font-size: 12px; color: #64748b; margin-top: 1px; }
+
+@media (max-width: 900px) {
+  .greeting { font-size: 20px; }
+  .date { margin-bottom: 16px; }
+  .statsGrid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .statCard { padding: 14px; gap: 10px; }
+  .statIcon { width: 40px; height: 40px; font-size: 18px; }
+  .statValue { font-size: 22px; }
+  .section { padding: 16px; }
+}
+
+@media (max-width: 640px) {
+  .greeting { font-size: 18px; }
+  .date { font-size: 12px; }
+  .statsGrid { grid-template-columns: 1fr 1fr; }
+  .sectionHeader { flex-wrap: wrap; gap: 6px; }
+  .sectionHeader h3 { font-size: 14px; }
+  .apptCard { padding: 10px 12px; gap: 8px; }
+  .apptTime { min-width: 58px; font-size: 12px; }
+  .apptPatient { font-size: 13px; }
+  .apptDoctor { font-size: 11px; }
+}

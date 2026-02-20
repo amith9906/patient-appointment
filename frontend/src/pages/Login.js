@@ -49,7 +49,6 @@ export default function Login() {
         flex: 1,
         background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #1d4ed8 100%)',
         padding: '48px 52px',
-        display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
         color: '#fff',
@@ -116,12 +115,12 @@ export default function Login() {
       <div style={{
         width: '100%',
         maxWidth: 460,
-        minWidth: 320,
+        minWidth: 0,
         background: '#f8fafc',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '40px 32px',
+        padding: '24px 18px',
         flexShrink: 0,
       }}>
         <div style={{ width: '100%', maxWidth: 380 }}>

@@ -45,3 +45,28 @@
 .infoItem { display: flex; flex-direction: column; gap: 3px; }
 .infoLabel { font-size: 12px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
 .infoValue { font-size: 14px; color: #1e293b; font-weight: 500; }
+
+@media (max-width: 900px) {
+  .pageHeader { margin-bottom: 16px; }
+  .pageTitle { font-size: 20px; }
+  .filterBar { gap: 8px; }
+  .searchInput { min-width: 180px; }
+  .btnPrimary, .btnSecondary { padding: 8px 14px; }
+  .grid3 { grid-template-columns: 1fr 1fr; }
+  .infoGrid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+}
+
+@media (max-width: 640px) {
+  .pageTitle { font-size: 18px; }
+  .pageSubtitle { font-size: 12px; }
+  .filterBar > * { width: 100%; }
+  .searchInput, .filterSelect { width: 100%; min-width: 0; }
+  .btnPrimary, .btnSecondary { width: 100%; text-align: center; }
+  .grid2, .grid3 { grid-template-columns: 1fr; gap: 12px; }
+  .formActions { flex-direction: column-reverse; gap: 8px; }
+  .formActions button { width: 100%; }
+  .actions { gap: 4px; }
+  .actions button { padding: 5px 10px; font-size: 11px; }
+  .infoGrid { grid-template-columns: 1fr; gap: 10px; }
+  .card { border-radius: 10px; }
+}
