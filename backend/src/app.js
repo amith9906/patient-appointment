@@ -1,0 +1,56 @@
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+const { sequelize } = require('./models');
+
+const app = express();
+
+// Middleware
+app.use(cors({ origin: 'http://localhost:3000', credentials: true }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Static uploads
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// Routes
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/hospitals', require('./routes/hospitals'));
+app.use('/api/departments', require('./routes/departments'));
+app.use('/api/doctors', require('./routes/doctors'));
+app.use('/api/patients', require('./routes/patients'));
+app.use('/api/appointments', require('./routes/appointments'));
+app.use('/api/medications', require('./routes/medications'));
+app.use('/api/labs', require('./routes/labs'));
+app.use('/api/reports', require('./routes/reports'));
+app.use('/api/users', require('./routes/users'));
+app.use('/api/prescriptions', require('./routes/prescriptions'));
+app.use('/api/pdf', require('./routes/pdf'));
+app.use('/api/bulk', require('./routes/bulk'));
+
+// Health check
+app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));
+
+// Error handler
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ message: err.message || 'Internal server error' });
+});
+
+const PORT = process.env.PORT || 5000;
+
+async function start() {
+  try {
+    await sequelize.authenticate();
+    console.log('Database connected.');
+    await sequelize.sync(); // creates missing tables only — use migrations for schema changes
+    console.log('Models synced.');
+    app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+  } catch (err) {
+    console.error('Startup error:', err);
+    process.exit(1);
+  }
+}
+
+start();
