@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://patient-appointment-fsgr.onrender.com/api/$1"
+    }
+  ]
+}
