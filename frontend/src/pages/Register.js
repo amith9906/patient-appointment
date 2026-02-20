@@ -60,7 +60,6 @@ export default function Register() {
         flex: 1,
         background: 'linear-gradient(135deg, #064e3b 0%, #065f46 50%, #059669 100%)',
         padding: '48px 52px',
-        display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
         color: '#fff',
@@ -108,12 +107,12 @@ export default function Register() {
       <div style={{
         width: '100%',
         maxWidth: 480,
-        minWidth: 320,
+        minWidth: 0,
         background: '#f8fafc',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '40px 32px',
+        padding: '24px 18px',
         flexShrink: 0,
       }}>
         <div style={{ width: '100%', maxWidth: 400 }}>
@@ -186,7 +185,7 @@ export default function Register() {
                     onFocus={e => e.target.style.borderColor = '#16a34a'}
                     onBlur={e => e.target.style.borderColor = '#e2e8f0'} />
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
                     <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Date of Birth</label>
                     <input type="date" value={form.dateOfBirth} onChange={e => set('dateOfBirth', e.target.value)}
