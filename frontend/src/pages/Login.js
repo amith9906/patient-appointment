@@ -5,11 +5,11 @@ import { toast } from 'react-toastify';
 
 const FEATURES = [
   { icon: '🗓️', title: 'Smart Scheduling', desc: 'Appointment booking with real-time slot availability across all doctors and departments' },
-  { icon: '💊', title: 'Prescriptions & Pharmacy', desc: 'Digital prescriptions, medication inventory, and stock tracking with vendor management' },
-  { icon: '🔬', title: 'Lab Management', desc: 'End-to-end lab test workflow — from order to results with PDF lab reports' },
+  { icon: 'Rx', title: 'Prescriptions & Pharmacy', desc: 'Digital prescriptions, medication inventory, and stock tracking with vendor management' },
+  { icon: '🔬', title: 'Lab Management', desc: 'End-to-end lab test workflow - from order to results with PDF lab reports' },
   { icon: '🧾', title: 'Billing & PDFs', desc: 'Auto-generated medical bills, receipts and prescriptions with hospital GSTIN branding' },
   { icon: '📊', title: 'Analytics Dashboard', desc: 'Revenue trends, appointment stats, stock alerts and real-time hospital performance' },
-  { icon: '🏥', title: 'Multi-Clinic Ready', desc: 'Each clinic gets its own settings, PDF templates, GSTIN and doctor signatory' },
+  { icon: 'Hospital', title: 'Multi-Clinic Ready', desc: 'Each clinic gets its own settings, PDF templates, GSTIN and doctor signatory' },
 ];
 
 const ROLES = [
@@ -35,7 +35,7 @@ export default function Login() {
       toast.success(`Welcome back, ${user.name}!`);
       navigate('/');
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Login failed. Check your credentials.');
+      toast.error(err.response.data.message || 'Login failed. Check your credentials.');
     } finally {
       setLoading(false);
     }
@@ -58,7 +58,7 @@ export default function Login() {
         {/* Logo + Product name */}
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 40 }}>
-            <div style={{ fontSize: 36, lineHeight: 1 }}>🏥</div>
+            <div style={{ fontSize: 36, lineHeight: 1 }}>Hospital</div>
             <div>
               <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.5px' }}>MediSchedule</div>
               <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 2 }}>Hospital Management Platform</div>
@@ -69,7 +69,7 @@ export default function Login() {
             Everything your clinic<br />needs, in one place.
           </h1>
           <p style={{ fontSize: 15, color: 'rgba(255,255,255,0.7)', marginBottom: 36, lineHeight: 1.6, maxWidth: 420 }}>
-            From patient registration to PDF prescriptions, lab reports, billing and analytics — MediSchedule runs your entire hospital workflow.
+            From patient registration to PDF prescriptions, lab reports, billing and analytics - MediSchedule runs your entire hospital workflow.
           </p>
 
           {/* Role pills */}
@@ -107,7 +107,7 @@ export default function Login() {
 
         {/* Footer tag */}
         <div style={{ marginTop: 32, fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>
-          MediSchedule · Built with Node.js + React + PostgreSQL
+          MediSchedule  |  Built with Node.js + React + PostgreSQL
         </div>
       </div>
 
@@ -127,7 +127,7 @@ export default function Login() {
 
           {/* Mobile logo (hidden on md+) */}
           <div className="flex md:hidden items-center gap-3 mb-8">
-            <span style={{ fontSize: 28 }}>🏥</span>
+            <span style={{ fontSize: 28 }}>Hospital</span>
             <span style={{ fontSize: 20, fontWeight: 800, color: '#0f172a' }}>MediSchedule</span>
           </div>
 
@@ -191,28 +191,28 @@ export default function Login() {
             {/* Submit */}
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: -6 }}>
               <Link to="/forgot-password" style={{ fontSize: 12, color: '#2563eb', textDecoration: 'none', fontWeight: 600 }}>
-                Forgot password?
+                Forgot password
               </Link>
             </div>
 
             <button type="submit" disabled={loading} style={{
-              background: loading ? '#93c5fd' : 'linear-gradient(135deg, #2563eb, #1d4ed8)',
+              background:loading ? '#93c5fd' : 'linear-gradient(135deg, #2563eb, #1d4ed8)',
               color: '#fff', border: 'none',
               padding: '13px', borderRadius: 10,
               fontSize: 15, fontWeight: 700,
-              cursor: loading ? 'default' : 'pointer',
+              cursor:loading ? 'default' : 'pointer',
               transition: 'all 0.2s',
               boxShadow: '0 4px 14px rgba(37,99,235,0.35)',
               marginTop: 4,
             }}>
-              {loading ? 'Signing in…' : 'Sign In →'}
+              {loading ? 'Signing in...' : 'Sign In ->'}
             </button>
           </form>
 
           {/* Divider */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '24px 0' }}>
             <div style={{ flex: 1, height: 1, background: '#e2e8f0' }} />
-            <span style={{ fontSize: 12, color: '#94a3b8' }}>New to MediSchedule?</span>
+            <span style={{ fontSize: 12, color: '#94a3b8' }}>New to MediSchedule</span>
             <div style={{ flex: 1, height: 1, background: '#e2e8f0' }} />
           </div>
 
@@ -240,12 +240,12 @@ export default function Login() {
             padding: '14px 16px',
             fontSize: 12,
           }}>
-            <div style={{ fontWeight: 700, color: '#1d4ed8', marginBottom: 6 }}>👋 First time? Get started:</div>
+            <div style={{ fontWeight: 700, color: '#1d4ed8', marginBottom: 6 }}>Hi First time Get started:</div>
             <ol style={{ color: '#3730a3', margin: 0, paddingLeft: 16, lineHeight: 1.8 }}>
               <li>Click <strong>Create an account</strong> and choose <em>Admin</em></li>
               <li>Log in and add your <strong>Hospital</strong> from the sidebar</li>
               <li>Configure GSTIN & PDF templates in <strong>Settings</strong></li>
-              <li>Add doctors, create appointments — and generate PDFs!</li>
+              <li>Add doctors, create appointments - and generate PDFs!</li>
             </ol>
           </div>
         </div>

@@ -8,7 +8,7 @@ const ROLES = [
   { value: 'doctor', label: '👨‍⚕️ Doctor', desc: 'Manage schedule, write prescriptions, view patients' },
   { value: 'receptionist', label: '🖥️ Receptionist', desc: 'Manage appointments, register patients' },
   { value: 'lab_technician', label: '🔬 Lab Technician', desc: 'Process lab tests, upload results' },
-  { value: 'admin', label: '⚙️ Admin', desc: 'Full access — manage hospital, staff & settings' },
+  { value: 'admin', label: '⚙️ Admin', desc: 'Full access - manage hospital, staff & settings' },
 ];
 
 export default function Register() {
@@ -35,7 +35,7 @@ export default function Register() {
       toast.success('Account created! Please sign in.');
       navigate('/login');
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Registration failed');
+      toast.error(err.response.data.message || 'Registration failed');
     } finally {
       setLoading(false);
     }
@@ -67,7 +67,7 @@ export default function Register() {
       }} className="hidden md:flex">
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 48 }}>
-            <div style={{ fontSize: 36 }}>🏥</div>
+            <div style={{ fontSize: 36 }}>Hospital</div>
             <div>
               <div style={{ fontSize: 22, fontWeight: 800 }}>MediSchedule</div>
               <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 2 }}>Hospital Management Platform</div>
@@ -78,14 +78,14 @@ export default function Register() {
             Join your hospital's<br />digital platform
           </h1>
           <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.75)', marginBottom: 40, lineHeight: 1.7, maxWidth: 380 }}>
-            Whether you're a patient booking your first appointment or an admin setting up a new clinic — it all starts here.
+            Whether you're a patient booking your first appointment or an admin setting up a new clinic - it all starts here.
           </p>
 
           {/* Role cards */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {ROLES.map(r => (
               <div key={r.value} style={{
-                background: form.role === r.value ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.07)',
+                background:form.role === r.value ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.07)',
                 border: `1.5px solid ${form.role === r.value ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.12)'}`,
                 borderRadius: 12,
                 padding: '12px 16px',
@@ -99,7 +99,7 @@ export default function Register() {
           </div>
         </div>
         <div style={{ marginTop: 32, fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>
-          MediSchedule · Secure · Multi-tenant · HIPAA-ready
+          MediSchedule  |  Secure  |  Multi-tenant  |  HIPAA-ready
         </div>
       </div>
 
@@ -117,7 +117,7 @@ export default function Register() {
       }}>
         <div style={{ width: '100%', maxWidth: 400 }}>
           <div className="flex md:hidden items-center gap-3 mb-8">
-            <span style={{ fontSize: 28 }}>🏥</span>
+            <span style={{ fontSize: 28 }}>Hospital</span>
             <span style={{ fontSize: 20, fontWeight: 800, color: '#0f172a' }}>MediSchedule</span>
           </div>
 
@@ -142,7 +142,7 @@ export default function Register() {
                 color: '#1d4ed8', padding: '4px 12px', borderRadius: 999,
                 fontSize: 12, fontWeight: 700,
               }}>
-                {ROLES.find(r => r.value === form.role)?.label}
+                {ROLES.find(r => r.value === form.role).label}
               </div>
             </div>
 
@@ -209,21 +209,21 @@ export default function Register() {
             )}
 
             <button type="submit" disabled={loading} style={{
-              background: loading ? '#6ee7b7' : 'linear-gradient(135deg, #059669, #047857)',
+              background:loading ? '#6ee7b7' : 'linear-gradient(135deg, #059669, #047857)',
               color: '#fff', border: 'none',
               padding: '13px', borderRadius: 10,
               fontSize: 15, fontWeight: 700,
-              cursor: loading ? 'default' : 'pointer',
+              cursor:loading ? 'default' : 'pointer',
               boxShadow: '0 4px 14px rgba(5,150,105,0.35)',
               marginTop: 4,
             }}>
-              {loading ? 'Creating account…' : 'Create Account →'}
+              {loading ? 'Creating account...' : 'Create Account ->'}
             </button>
           </form>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '22px 0' }}>
             <div style={{ flex: 1, height: 1, background: '#e2e8f0' }} />
-            <span style={{ fontSize: 12, color: '#94a3b8' }}>Already registered?</span>
+            <span style={{ fontSize: 12, color: '#94a3b8' }}>Already registered</span>
             <div style={{ flex: 1, height: 1, background: '#e2e8f0' }} />
           </div>
 

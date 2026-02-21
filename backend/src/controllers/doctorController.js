@@ -211,7 +211,11 @@ exports.getAvailableSlots = async (req, res) => {
       },
     });
 
-    const bookedTimes = bookedAppointments.map((a) => a.appointmentTime);
+    const bookedTimes = new Set(
+      bookedAppointments
+        .map((a) => String(a.appointmentTime || '').slice(0, 5))
+        .filter(Boolean)
+    );
     const slots = [];
     const start = parseInt(doctor.availableFrom.split(':')[0]);
     const end = parseInt(doctor.availableTo.split(':')[0]);
@@ -219,7 +223,7 @@ exports.getAvailableSlots = async (req, res) => {
     for (let h = start; h < end; h++) {
       for (let m = 0; m < 60; m += 30) {
         const time = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-        slots.push({ time, available: !bookedTimes.includes(time) });
+        slots.push({ time, available: !bookedTimes.has(time) });
       }
     }
     res.json(slots);

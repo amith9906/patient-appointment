@@ -4,6 +4,7 @@ import { toast } from 'react-toastify';
 import Table from '../components/Table';
 import Modal from '../components/Modal';
 import Badge from '../components/Badge';
+import SearchableSelect from '../components/SearchableSelect';
 import styles from './Page.module.css';
 
 const ROLES = ['super_admin', 'admin', 'doctor', 'receptionist', 'lab_technician', 'patient'];
@@ -53,7 +54,7 @@ export default function UserManagement() {
       if (editing) { await api.put(`/users/${editing.id}`, data); toast.success('User updated'); }
       else { await api.post('/users', data); toast.success('User created'); }
       setModal(false); load();
-    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.response.data.message || 'Error'); }
   };
 
   const toggleActive = async (user) => {
@@ -67,7 +68,7 @@ export default function UserManagement() {
   const openAssignDoctor = (user) => {
     setAssignTarget(user);
     const linked = doctorProfiles.find((d) => d.userId === user.id);
-    setAssignDoctorId(linked?.id || '');
+    setAssignDoctorId(linked.id || '');
     setAssignModal(true);
   };
 
@@ -82,7 +83,7 @@ export default function UserManagement() {
       setAssignDoctorId('');
       load();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to map doctor profile');
+      toast.error(err.response.data.message || 'Failed to map doctor profile');
     }
   };
 
@@ -98,7 +99,7 @@ export default function UserManagement() {
     { key: 'name', label: 'Name', render: (v, r) => <div><div className="font-semibold">{v}</div><div style={{ fontSize: 12, color: '#64748b' }}>{r.email}</div></div> },
     { key: 'role', label: 'Role', render: (v) => (
       <span style={{ background: ROLE_COLORS[v] + '20', color: ROLE_COLORS[v], padding: '3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600 }}>
-        {v?.replace('_', ' ')}
+        {v.replace('_', ' ')}
       </span>
     )},
     { key: 'isActive', label: 'Status', render: (v) => <Badge text={v ? 'Active' : 'Inactive'} type={v ? 'active' : 'inactive'} /> },
@@ -127,7 +128,7 @@ export default function UserManagement() {
       <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
         {ROLES.map(r => (
           <div key={r} onClick={() => setRoleFilter(roleFilter === r ? '' : r)}
-            style={{ background: roleFilter === r ? ROLE_COLORS[r] : '#fff', color: roleFilter === r ? '#fff' : ROLE_COLORS[r],
+            style={{ background:roleFilter === r ? ROLE_COLORS[r] : '#fff', color:roleFilter === r ? '#fff' : ROLE_COLORS[r],
               border: `2px solid ${ROLE_COLORS[r]}`, padding: '8px 16px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, transition: 'all 0.2s' }}>
             {stats[r] || 0} {r.replace('_', ' ')}
           </div>
@@ -160,10 +161,14 @@ export default function UserManagement() {
               </select>
             </div>
             <div className={styles.field}><label className={styles.label}>Hospital</label>
-              <select className={styles.input} value={form.hospitalId || ''} onChange={e => set('hospitalId', e.target.value)}>
-                <option value="">Not Assigned</option>
-                {hospitals.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
-              </select>
+              <SearchableSelect
+                className={styles.input}
+                value={form.hospitalId || ''}
+                onChange={(value) => set('hospitalId', value)}
+                options={hospitals.map((h) => ({ value: h.id, label: h.name }))}
+                placeholder="Search hospital..."
+                emptyLabel="Not Assigned"
+              />
             </div>
           </div>
           <div className={styles.formActions}>
@@ -182,14 +187,18 @@ export default function UserManagement() {
             </div>
             <div className={styles.field}>
               <label className={styles.label}>Doctor Profile *</label>
-              <select className={styles.input} value={assignDoctorId} onChange={(e) => setAssignDoctorId(e.target.value)} required>
-                <option value="">Select doctor profile</option>
-                {availableProfilesForAssign.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name} {d.email ? `(${d.email})` : ''} {d.hospital?.name ? `- ${d.hospital.name}` : ''}
-                  </option>
-                ))}
-              </select>
+              <SearchableSelect
+                className={styles.input}
+                value={assignDoctorId}
+                onChange={(value) => setAssignDoctorId(value)}
+                options={availableProfilesForAssign.map((d) => ({
+                  value: d.id,
+                  label: `${d.name}${d.email ? ` (${d.email})` : ''}${d.hospital?.name ? ` - ${d.hospital.name}` : ''}`,
+                }))}
+                placeholder="Search doctor profile..."
+                emptyLabel="Select doctor profile"
+                required
+              />
             </div>
           </div>
           <div className={styles.formActions}>

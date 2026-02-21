@@ -6,12 +6,16 @@ const { authenticate, authorize } = require('../middleware/auth');
 
 router.use(authenticate);
 router.get('/today',      authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), c.getTodayAppointments);
+router.get('/queue',      authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), c.getQueue);
 router.get('/dashboard',  authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), c.getDashboardStats);
 router.get('/analytics',  authorize('super_admin', 'admin'), c.getBillingAnalytics);
+router.get('/patient-analytics', authorize('super_admin', 'admin'), c.getPatientAnalytics);
 router.get('/',           authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), c.getAll);
 router.get('/:id',        authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), c.getOne);
 router.post('/',          authorize('super_admin', 'admin', 'receptionist'), c.create);
 router.put('/:id',        authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.update);
+router.patch('/:id/check-in', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.checkIn);
+router.patch('/:id/claim', authorize('super_admin', 'admin', 'receptionist'), c.updateClaim);
 router.put('/:id/cancel', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.cancel);
 
 // Vitals — any authed staff reads; receptionist + doctor can save/edit

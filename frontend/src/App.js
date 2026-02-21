@@ -25,9 +25,13 @@ import Reports from './pages/Reports';
 import UserManagement from './pages/UserManagement';
 import Analytics from './pages/Analytics';
 import Billing from './pages/Billing';
+import MedicineInvoices from './pages/MedicineInvoices';
+import Expenses from './pages/Expenses';
 import Settings from './pages/Settings';
 import Vendors from './pages/Vendors';
 import StockManagement from './pages/StockManagement';
+import CorporateAccounts from './pages/CorporateAccounts';
+import PackagePlans from './pages/PackagePlans';
 
 // Portals
 import PatientDashboard from './pages/portal/PatientDashboard';
@@ -55,7 +59,8 @@ function Loader() {
   return (
     <div className="flex h-screen items-center justify-center">
       <div className="text-center">
-        <div className="text-5xl mb-3">🏥</div>
+        <div className="text-5xl mb-2" aria-label="Hospital">🏥</div>
+        <div className="text-xl font-semibold text-slate-800 mb-1">MediSchedule</div>
         <div className="text-slate-500 text-base">Loading MediSchedule...</div>
       </div>
     </div>
@@ -106,10 +111,14 @@ function AppRoutes() {
       <Route path="/users" element={<PrivateRoute roles={['super_admin','admin']}><UserManagement /></PrivateRoute>} />
       <Route path="/analytics" element={<PrivateRoute roles={['super_admin','admin']}><Analytics /></PrivateRoute>} />
       <Route path="/billing" element={<PrivateRoute roles={['super_admin','admin','receptionist']}><Billing /></PrivateRoute>} />
+      <Route path="/medicine-invoices" element={<PrivateRoute roles={['super_admin','admin','receptionist']}><MedicineInvoices /></PrivateRoute>} />
+      <Route path="/expenses" element={<PrivateRoute roles={['super_admin','admin']}><Expenses /></PrivateRoute>} />
       <Route path="/settings" element={<PrivateRoute roles={['super_admin','admin']}><Settings /></PrivateRoute>} />
       <Route path="/change-password" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor','patient','lab_technician']}><ChangePassword /></PrivateRoute>} />
       <Route path="/vendors" element={<PrivateRoute roles={['super_admin','admin','receptionist']}><Vendors /></PrivateRoute>} />
       <Route path="/stock" element={<PrivateRoute roles={['super_admin','admin','receptionist']}><StockManagement /></PrivateRoute>} />
+      <Route path="/corporates" element={<PrivateRoute roles={['super_admin','admin','receptionist']}><CorporateAccounts /></PrivateRoute>} />
+      <Route path="/packages" element={<PrivateRoute roles={['super_admin','admin','receptionist']}><PackagePlans /></PrivateRoute>} />
 
       {/* Patient Portal */}
       <Route path="/patient-portal" element={<PrivateRoute roles={['patient']}><PatientDashboard /></PrivateRoute>} />

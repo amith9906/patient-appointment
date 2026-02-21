@@ -17,7 +17,7 @@ export default function ForgotPassword() {
       toast.success('OTP sent to your email');
       setStep(2);
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to send OTP');
+      toast.error(err.response.data.message || 'Failed to send OTP');
     } finally {
       setLoading(false);
     }
@@ -38,7 +38,7 @@ export default function ForgotPassword() {
       toast.success('Password reset successful. Please login.');
       navigate('/login');
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to reset password');
+      toast.error(err.response.data.message || 'Failed to reset password');
     } finally {
       setLoading(false);
     }

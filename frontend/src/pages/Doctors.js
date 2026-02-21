@@ -3,6 +3,7 @@ import { doctorAPI, hospitalAPI, departmentAPI } from '../services/api';
 import Modal from '../components/Modal';
 import Table from '../components/Table';
 import Badge from '../components/Badge';
+import SearchableSelect from '../components/SearchableSelect';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
 
@@ -52,11 +53,11 @@ export default function Doctors() {
       if (editing) { await doctorAPI.update(editing.id, form); toast.success('Doctor updated'); }
       else { await doctorAPI.create(form); toast.success('Doctor created'); }
       setModal(false); load();
-    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.response.data.message || 'Error'); }
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Deactivate this doctor?')) return;
+    if (!window.confirm('Deactivate this doctor')) return;
     try { await doctorAPI.delete(id); toast.success('Doctor deactivated'); load(); }
     catch { toast.error('Error'); }
   };
@@ -69,7 +70,7 @@ export default function Doctors() {
   const columns = [
     { key: 'name', label: 'Name', render: (v, r) => <div><div style={{ fontWeight: 600 }}>{v}</div><div style={{ fontSize: 12, color: '#64748b' }}>{r.specialization}</div></div> },
     { key: 'qualification', label: 'Qualification' },
-    { key: 'hospital', label: 'Hospital', render: (v) => v?.name || '—' },
+    { key: 'hospital', label: 'Hospital', render: (v) => v.name || '-' },
     { key: 'phone', label: 'Phone' },
     { key: 'consultationFee', label: 'Fee', render: (v) => `$${parseFloat(v || 0).toFixed(2)}` },
     { key: 'isActive', label: 'Status', render: (v) => <Badge text={v ? 'Active' : 'Inactive'} type={v ? 'active' : 'inactive'} /> },
@@ -111,16 +112,24 @@ export default function Doctors() {
               </select>
             </div>
             <div className={styles.field}><label className={styles.label}>Hospital</label>
-              <select className={styles.input} value={form.hospitalId || ''} onChange={(e) => { set('hospitalId', e.target.value); loadDepts(e.target.value); }}>
-                <option value="">Select Hospital</option>
-                {hospitals.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
-              </select>
+              <SearchableSelect
+                className={styles.input}
+                value={form.hospitalId || ''}
+                onChange={(v) => { set('hospitalId', v); loadDepts(v); }}
+                placeholder="Search hospital"
+                emptyLabel="Select Hospital"
+                options={hospitals.map((h) => ({ value: h.id, label: h.name }))}
+              />
             </div>
             <div className={styles.field}><label className={styles.label}>Department</label>
-              <select className={styles.input} value={form.departmentId || ''} onChange={(e) => set('departmentId', e.target.value)}>
-                <option value="">Select Department</option>
-                {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
+              <SearchableSelect
+                className={styles.input}
+                value={form.departmentId || ''}
+                onChange={(v) => set('departmentId', v)}
+                placeholder="Search department"
+                emptyLabel="Select Department"
+                options={departments.map((d) => ({ value: d.id, label: d.name }))}
+              />
             </div>
             <div className={styles.field} style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Available Days</label>

@@ -1,4 +1,4 @@
-const { BillItem, Appointment, Doctor } = require('../models');
+const { BillItem, Appointment, Doctor, sequelize } = require('../models');
 const { ensureScopedHospital, isSuperAdmin } = require('../utils/accessScope');
 
 // Verify caller has access to this appointment
@@ -21,6 +21,9 @@ async function checkAccess(req, res, apptId) {
 // GET /appointments/:id/bill-items
 exports.getByAppointment = async (req, res) => {
   try {
+    const appt = await checkAccess(req, res, req.params.id);
+    if (!appt) return;
+
     const items = await BillItem.findAll({
       where: { appointmentId: req.params.id },
       order: [['createdAt', 'ASC']],
@@ -32,9 +35,13 @@ exports.getByAppointment = async (req, res) => {
 // PUT /appointments/:id/bill-items
 // Body: { items: [{ description, category, quantity, unitPrice }] }
 exports.saveItems = async (req, res) => {
+  const tx = await sequelize.transaction();
   try {
     const appt = await checkAccess(req, res, req.params.id);
-    if (!appt) return;
+    if (!appt) {
+      await tx.rollback();
+      return;
+    }
 
     const { items = [] } = req.body;
 
@@ -53,15 +60,19 @@ exports.saveItems = async (req, res) => {
     }).filter(r => r.description && r.unitPrice > 0);
 
     // Replace all items atomically
-    await BillItem.destroy({ where: { appointmentId: req.params.id } });
-    const created = records.length ? await BillItem.bulkCreate(records) : [];
+    await BillItem.destroy({ where: { appointmentId: req.params.id }, transaction: tx });
+    const created = records.length ? await BillItem.bulkCreate(records, { transaction: tx }) : [];
 
     // Update appointment.treatmentBill = sum of all item amounts
     const total = created.reduce((s, r) => s + Number(r.amount), 0);
-    await appt.update({ treatmentBill: parseFloat(total.toFixed(2)) });
+    await appt.update({ treatmentBill: parseFloat(total.toFixed(2)) }, { transaction: tx });
+    await tx.commit();
 
     res.json(created);
-  } catch (err) { res.status(400).json({ message: err.message }); }
+  } catch (err) {
+    await tx.rollback();
+    res.status(400).json({ message: err.message });
+  }
 };
 
 // PATCH /appointments/:id/mark-paid

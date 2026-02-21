@@ -1,39 +1,68 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import api, { pdfAPI, vitalsAPI, appointmentAPI } from '../../services/api';
+import api, { pdfAPI, vitalsAPI, appointmentAPI, labAPI, reportAPI, packageAPI } from '../../services/api';
 import { toast } from 'react-toastify';
+import SearchableSelect from '../../components/SearchableSelect';
 
-// ─── Prescription constants ───────────────────────────────────────────────────
+// Prescription constants
 
 const SLOT_KEYS = ['M', 'A', 'N'];
 const SLOT_META = {
-  M: { label: 'Morning',   meal: 'Breakfast', icon: '🌅' },
-  A: { label: 'Afternoon', meal: 'Lunch',     icon: '☀️' },
-  N: { label: 'Night',     meal: 'Dinner',    icon: '🌙' },
+  M: { label: 'Morning',   meal: 'Breakfast', icon: 'M' },
+  A: { label: 'Afternoon', meal: 'Lunch',     icon: 'A' },
+  N: { label: 'Night',     meal: 'Dinner',    icon: 'N' },
 };
-const DOSE_OPTS   = ['0', '½', '1', '1½', '2'];
+const DOSE_OPTS   = ['0', '0.5', '1', '1.5', '2'];
 const MEAL_TIMING = ['Before', 'After', 'With'];
 const DURATION_CHIPS = ['1 Day', '3 Days', '5 Days', '7 Days', '10 Days', '2 Weeks', '1 Month', '3 Months'];
+const RX_INSTRUCTION_CHIPS = [
+  'After food',
+  'Before food',
+  'With food',
+  'At bedtime',
+  'Drink plenty of water',
+  'Complete full course',
+  'Do not skip dose',
+];
+const PRESCRIPTION_LANGS = [
+  { code: 'kn', label: 'Kannada' },
+  { code: 'hi', label: 'Hindi' },
+  { code: 'te', label: 'Telugu' },
+  { code: 'en', label: 'English' },
+  { code: 'ta', label: 'Tamil' },
+  { code: 'ml', label: 'Malayalam' },
+  { code: 'mwr', label: 'Marwadi' },
+  { code: 'mr', label: 'Marathi' },
+];
+const LANG_LABEL_BY_CODE = PRESCRIPTION_LANGS.reduce((acc, item) => ({ ...acc, [item.code]: item.label }), {});
 
 const INIT_SLOTS = {
   M: { dose: '1', timing: 'After' },
   A: { dose: '0', timing: 'After' },
   N: { dose: '1', timing: 'After' },
 };
-const INIT_RX = { medicationId: '', selectedMed: null, duration: '5 Days', customDuration: '', instructions: '', quantity: 10 };
+const INIT_RX = {
+  medicationId: '',
+  selectedMed: null,
+  duration: '5 Days',
+  customDuration: '',
+  instructions: '',
+  translatedInstructions: {},
+  quantity: 10,
+};
 
-// ─── Vitals constants ─────────────────────────────────────────────────────────
+// Vitals constants
 
 const VITAL_FIELDS = [
-  { key: 'heartRate',       label: 'Heart Rate',   icon: '❤️',  unit: 'bpm',   normal: [60, 100],   placeholder: '72' },
-  { key: 'systolic',        label: 'BP Systolic',  icon: '💉',  unit: 'mmHg',  normal: [90, 140],   placeholder: '120' },
-  { key: 'diastolic',       label: 'BP Diastolic', icon: '💉',  unit: 'mmHg',  normal: [60, 90],    placeholder: '80' },
-  { key: 'temperature',     label: 'Temperature',  icon: '🌡️', unit: '°C',    normal: [36.1, 37.2],placeholder: '36.6' },
-  { key: 'spo2',            label: 'SpO2',         icon: '💧',  unit: '%',     normal: [95, 100],   placeholder: '98' },
-  { key: 'weight',          label: 'Weight',       icon: '⚖️', unit: 'kg',    normal: null,        placeholder: '70' },
-  { key: 'height',          label: 'Height',       icon: '📏',  unit: 'cm',    normal: null,        placeholder: '170' },
-  { key: 'bloodSugar',      label: 'Blood Sugar',  icon: '🩸',  unit: 'mg/dL', normal: [70, 140],   placeholder: '95' },
-  { key: 'respiratoryRate', label: 'Resp. Rate',   icon: '🫁',  unit: '/min',  normal: [12, 20],    placeholder: '16' },
+  { key: 'heartRate',       label: 'Heart Rate',   icon: 'HR', unit: 'bpm',   normal: [60, 100],   placeholder: '72' },
+  { key: 'systolic',        label: 'BP Systolic',  icon: 'BP', unit: 'mmHg',  normal: [90, 140],   placeholder: '120' },
+  { key: 'diastolic',       label: 'BP Diastolic', icon: 'BP', unit: 'mmHg',  normal: [60, 90],    placeholder: '80' },
+  { key: 'temperature',     label: 'Temperature',  icon: 'T',  unit: 'C',     normal: [36.1, 37.2],placeholder: '36.6' },
+  { key: 'spo2',            label: 'SpO2',         icon: 'O2', unit: '%',     normal: [95, 100],   placeholder: '98' },
+  { key: 'weight',          label: 'Weight',       icon: 'W',  unit: 'kg',    normal: null,        placeholder: '70' },
+  { key: 'height',          label: 'Height',       icon: 'H',  unit: 'cm',    normal: null,        placeholder: '170' },
+  { key: 'bloodSugar',      label: 'Blood Sugar',  icon: 'BS', unit: 'mg/dL', normal: [70, 140],   placeholder: '95' },
+  { key: 'respiratoryRate', label: 'Resp. Rate',   icon: 'RR', unit: '/min',  normal: [12, 20],    placeholder: '16' },
 ];
 
 const COMMON_SYMPTOMS = [
@@ -49,16 +78,17 @@ const INIT_VITALS_FORM = {
   respiratoryRate: '', symptoms: [], vitalNotes: '',
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// Helpers
 
 function doseToNum(d) {
-  if (d === '½') return 0.5; if (d === '1½') return 1.5;
+  if (d === '0.5') return 0.5;
+  if (d === '1.5') return 1.5;
   return parseFloat(d) || 0;
 }
 function buildFrequency(slots) { return SLOT_KEYS.map(k => slots[k].dose).join('-'); }
 function buildTiming(slots) {
   return SLOT_KEYS.filter(k => slots[k].dose !== '0')
-    .map(k => `${slots[k].timing} ${SLOT_META[k].meal}`).join(' · ') || 'As needed';
+    .map(k => `${slots[k].timing} ${SLOT_META[k].meal}`).join(' - ') || 'As needed';
 }
 function freqLabel(slots) {
   const n = SLOT_KEYS.filter(k => slots[k].dose !== '0').length;
@@ -98,6 +128,8 @@ function vitalStatus(value, normal) {
 }
 const STATUS_COLORS = { normal: '#22c55e', warning: '#f59e0b', danger: '#ef4444', none: '#cbd5e1' };
 const STATUS_LABELS = { normal: 'Normal', warning: 'Borderline', danger: 'Abnormal', none: '' };
+const NOTE_TEMPLATE_KEY = 'clinical_note_templates_v1';
+const RX_MACRO_KEY = 'prescription_macros_v1';
 
 const downloadBlob = (blob, filename) => {
   const url = URL.createObjectURL(blob);
@@ -110,7 +142,22 @@ function parseSymptoms(raw) {
   try { return JSON.parse(raw); } catch { return raw.split(',').map(s => s.trim()).filter(Boolean); }
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+function parseTranslatedInstructions(raw) {
+  if (!raw) return {};
+  const src = typeof raw === 'string' ? (() => {
+    try { return JSON.parse(raw); } catch { return {}; }
+  })() : raw;
+  if (!src || typeof src !== 'object' || Array.isArray(src)) return {};
+  const out = {};
+  Object.keys(src).forEach((key) => {
+    const code = String(key || '').toLowerCase();
+    const text = String(src[key] || '').trim();
+    if (text) out[code] = text;
+  });
+  return out;
+}
+
+//  Component 
 
 export default function AppointmentDetail() {
   const { id } = useParams();
@@ -119,6 +166,17 @@ export default function AppointmentDetail() {
   const [appt, setAppt]                   = useState(null);
   const [medications, setMedications]     = useState([]);
   const [notes, setNotes]                 = useState({ diagnosis: '', notes: '', treatmentDone: '', treatmentBill: '' });
+  const [noteTemplates, setNoteTemplates] = useState(() => {
+    try {
+      const raw = localStorage.getItem(NOTE_TEMPLATE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [templateName, setTemplateName] = useState('');
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [prescriptions, setPrescriptions] = useState([]);
   const [history, setHistory]             = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -131,6 +189,19 @@ export default function AppointmentDetail() {
   const [autoQty, setAutoQty] = useState(true);
   const [medSearch, setMedSearch] = useState('');
   const [medOpen, setMedOpen]     = useState(false);
+  const [rxTargetLangs, setRxTargetLangs] = useState(['kn', 'hi']);
+  const [translatingRx, setTranslatingRx] = useState(false);
+  const [rxMacros, setRxMacros] = useState(() => {
+    try {
+      const raw = localStorage.getItem(RX_MACRO_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [rxMacroName, setRxMacroName] = useState('');
+  const [selectedRxMacroId, setSelectedRxMacroId] = useState('');
   const medRef = useRef(null);
 
   // Vitals form
@@ -141,8 +212,24 @@ export default function AppointmentDetail() {
   // Bill items
   const [billItems, setBillItems] = useState([]);
   const [billSaving, setBillSaving] = useState(false);
+  const [patientPackages, setPatientPackages] = useState([]);
+  const [packagesLoading, setPackagesLoading] = useState(false);
+  const [consumingPackageId, setConsumingPackageId] = useState('');
 
-  // ── Load data ─────────────────────────────────────────────────────────────
+  // Lab tests
+  const [labTests, setLabTests] = useState([]);
+  const [labs, setLabs] = useState([]);
+  const [labOrderOpen, setLabOrderOpen] = useState(false);
+  const [labOrderForm, setLabOrderForm] = useState({ testName: '', category: '', labId: '', price: '', normalRange: '', unit: '' });
+  const [labOrdering, setLabOrdering] = useState(false);
+
+  // Documents
+  const [documents, setDocuments] = useState([]);
+  const [docUploadOpen, setDocUploadOpen] = useState(false);
+  const [docUploading, setDocUploading] = useState(false);
+  const [docForm, setDocForm] = useState({ title: '', type: 'other', file: null });
+
+  //  Load data 
 
   useEffect(() => {
     Promise.all([
@@ -151,7 +238,9 @@ export default function AppointmentDetail() {
       api.get(`/prescriptions/appointment/${id}`),
       vitalsAPI.get(id),
       appointmentAPI.getBillItems(id),
-    ]).then(([a, m, p, v, b]) => {
+      labAPI.getAllTests({ appointmentId: id }),
+      labAPI.getAll(),
+    ]).then(([a, m, p, v, b, lt, lb]) => {
       const apptData = a.data;
       setAppt(apptData);
       setMedications(m.data);
@@ -163,39 +252,54 @@ export default function AppointmentDetail() {
         treatmentBill: apptData.treatmentBill || '',
       });
       setBillItems((b.data || []).map(i => ({ ...i, _key: i.id })));
+      setLabTests(lt.data || []);
+      setLabs(lb.data || []);
 
       // Load vitals if recorded
       if (v.data && v.data.id) {
         setVitalsRecorded(true);
         const vd = v.data;
         setVitalsForm({
-          heartRate: vd.heartRate ?? '',
-          systolic: vd.systolic ?? '',
-          diastolic: vd.diastolic ?? '',
-          temperature: vd.temperature ?? '',
-          spo2: vd.spo2 ?? '',
-          weight: vd.weight ?? '',
-          height: vd.height ?? '',
-          bloodSugar: vd.bloodSugar ?? '',
+          heartRate: vd.heartRate || '',
+          systolic: vd.systolic || '',
+          diastolic: vd.diastolic || '',
+          temperature: vd.temperature || '',
+          spo2: vd.spo2 || '',
+          weight: vd.weight || '',
+          height: vd.height || '',
+          bloodSugar: vd.bloodSugar || '',
           bloodSugarType: vd.bloodSugarType || 'random',
-          respiratoryRate: vd.respiratoryRate ?? '',
+          respiratoryRate: vd.respiratoryRate || '',
           symptoms: parseSymptoms(vd.symptoms),
           vitalNotes: vd.vitalNotes || '',
         });
       }
 
+      // Load patient documents (reports linked to this appointment)
+      if (apptData.patient.id) {
+        reportAPI.getByPatient(apptData.patient.id)
+          .then(r => setDocuments((r.data || []).filter(d => d.appointmentId === id)))
+          .catch(() => {});
+      }
+
       // Load patient history
-      if (apptData?.patient?.id) {
+      if (apptData.patient.id) {
         setHistoryLoading(true);
         api.get(`/patients/${apptData.patient.id}/history`)
           .then(h => {
-            const prev = (h.data?.appointments || [])
+            const prev = (h.data.appointments || [])
               .filter(v => v.id !== apptData.id)
               .sort((x, y) => new Date(`${y.appointmentDate}T${y.appointmentTime||'00:00'}`) - new Date(`${x.appointmentDate}T${x.appointmentTime||'00:00'}`));
             setHistory(prev);
           })
           .catch(() => setHistory([]))
           .finally(() => setHistoryLoading(false));
+
+        setPackagesLoading(true);
+        packageAPI.getPatientAssignments(apptData.patient.id, { status: 'active' })
+          .then((r) => setPatientPackages(r.data || []))
+          .catch(() => setPatientPackages([]))
+          .finally(() => setPackagesLoading(false));
       }
     });
   }, [id]);
@@ -208,6 +312,18 @@ export default function AppointmentDetail() {
     if (q > 0) setRxForm(f => ({ ...f, quantity: q }));
   }, [slots, rxForm.duration, rxForm.customDuration, autoQty]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(NOTE_TEMPLATE_KEY, JSON.stringify(noteTemplates));
+    } catch {}
+  }, [noteTemplates]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(RX_MACRO_KEY, JSON.stringify(rxMacros));
+    } catch {}
+  }, [rxMacros]);
+
   // Close medication dropdown on outside click
   useEffect(() => {
     const h = e => { if (medRef.current && !medRef.current.contains(e.target)) setMedOpen(false); };
@@ -215,22 +331,25 @@ export default function AppointmentDetail() {
     return () => document.removeEventListener('mousedown', h);
   }, []);
 
-  // ── Derived ───────────────────────────────────────────────────────────────
+  //  Derived 
 
   const filteredMeds = medications.filter(m => {
     const q = medSearch.toLowerCase();
-    return !q || m.name?.toLowerCase().includes(q) || m.genericName?.toLowerCase().includes(q) || m.composition?.toLowerCase().includes(q);
+    return !q
+      || String(m.name || '').toLowerCase().includes(q)
+      || String(m.genericName || '').toLowerCase().includes(q)
+      || String(m.composition || '').toLowerCase().includes(q);
   });
 
-  const allergyWarning = rxForm.selectedMed && appt?.patient?.allergies &&
+  const allergyWarning = rxForm.selectedMed && appt.patient.allergies &&
     appt.patient.allergies.toLowerCase().split(/[,;\s]+/)
       .some(a => a.length > 2 && rxForm.selectedMed.name.toLowerCase().includes(a));
 
   const bmi = calcBMI(vitalsForm.weight, vitalsForm.height);
 
-  // ── Handlers ──────────────────────────────────────────────────────────────
+  //  Handlers 
 
-  // ── Bill items helpers ─────────────────────────────────────────────────────
+  //  Bill items helpers 
 
   const addBillRow = () => setBillItems(prev => [...prev, { _key: Date.now(), description: '', category: 'other', quantity: 1, unitPrice: '', amount: 0 }]);
 
@@ -248,7 +367,7 @@ export default function AppointmentDetail() {
   const removeBillRow = (key) => setBillItems(prev => prev.filter(i => i._key !== key));
 
   const saveBill = async () => {
-    const validItems = billItems.filter(i => i.description?.trim() && parseFloat(i.unitPrice) > 0);
+    const validItems = billItems.filter(i => i.description.trim() && parseFloat(i.unitPrice) > 0);
     setBillSaving(true);
     try {
       const res = await appointmentAPI.saveBillItems(id, validItems);
@@ -271,6 +390,50 @@ export default function AppointmentDetail() {
     setSaving(true);
     try { await api.put(`/appointments/${id}`, notes); setAppt(a => ({ ...a, ...notes })); toast.success('Notes saved'); }
     catch { toast.error('Failed to save'); } finally { setSaving(false); }
+  };
+
+  const saveNoteTemplate = () => {
+    const name = String(templateName || '').trim();
+    if (!name) return toast.error('Template name is required');
+    const payload = {
+      id: `tpl-${Date.now()}`,
+      name,
+      diagnosis: notes.diagnosis || '',
+      notes: notes.notes || '',
+      treatmentDone: notes.treatmentDone || '',
+    };
+
+    setNoteTemplates((prev) => {
+      const existing = prev.find((x) => String(x.name || '').toLowerCase() === name.toLowerCase());
+      if (existing) {
+        return prev.map((x) => (x.id === existing.id ? { ...x, ...payload, id: existing.id } : x));
+      }
+      return [payload, ...prev].slice(0, 30);
+    });
+    setTemplateName('');
+    toast.success('Clinical template saved');
+  };
+
+  const applyNoteTemplate = () => {
+    if (!selectedTemplateId) return toast.error('Select a template');
+    const tpl = noteTemplates.find((x) => x.id === selectedTemplateId);
+    if (!tpl) return toast.error('Template not found');
+    setNotes((prev) => ({
+      ...prev,
+      diagnosis: tpl.diagnosis || '',
+      notes: tpl.notes || '',
+      treatmentDone: tpl.treatmentDone || '',
+    }));
+    toast.success(`Applied template: ${tpl.name}`);
+  };
+
+  const deleteNoteTemplate = () => {
+    if (!selectedTemplateId) return toast.error('Select a template');
+    const tpl = noteTemplates.find((x) => x.id === selectedTemplateId);
+    if (!tpl) return;
+    setNoteTemplates((prev) => prev.filter((x) => x.id !== selectedTemplateId));
+    setSelectedTemplateId('');
+    toast.success(`Deleted template: ${tpl.name}`);
   };
 
   const completeConsultation = async () => {
@@ -308,6 +471,98 @@ export default function AppointmentDetail() {
 
   const clearMed = () => { setRxForm(f => ({ ...f, medicationId: '', selectedMed: null })); setMedSearch(''); };
   const setSlot = (key, field, value) => setSlots(s => ({ ...s, [key]: { ...s[key], [field]: value } }));
+  const toggleRxTargetLang = (code) => {
+    setRxTargetLangs((prev) => (
+      prev.includes(code) ? prev.filter((x) => x !== code) : [...prev, code]
+    ));
+  };
+  const addInstructionChip = (chip) => {
+    const base = String(rxForm.instructions || '').trim();
+    const next = base ? `${base}; ${chip}` : chip;
+    setRxForm((f) => ({ ...f, instructions: next, translatedInstructions: {} }));
+  };
+
+  const saveRxMacro = () => {
+    const name = String(rxMacroName || '').trim();
+    if (!name) return toast.error('Macro name is required');
+    if (!rxForm.medicationId || !rxForm.selectedMed) return toast.error('Select medicine before saving macro');
+    const duration = rxForm.customDuration || rxForm.duration;
+    const payload = {
+      id: `rxm-${Date.now()}`,
+      name,
+      medicationId: rxForm.medicationId,
+      medicationName: rxForm.selectedMed.name,
+      slots,
+      duration: duration || '',
+      instructions: rxForm.instructions || '',
+      quantity: Number(rxForm.quantity || 0) || 1,
+    };
+    setRxMacros((prev) => {
+      const existing = prev.find((x) => String(x.name || '').toLowerCase() === name.toLowerCase());
+      if (existing) {
+        return prev.map((x) => (x.id === existing.id ? { ...payload, id: existing.id } : x));
+      }
+      return [payload, ...prev].slice(0, 50);
+    });
+    setRxMacroName('');
+    toast.success('Prescription macro saved');
+  };
+
+  const applyRxMacro = () => {
+    if (!selectedRxMacroId) return toast.error('Select a prescription macro');
+    const macro = rxMacros.find((x) => x.id === selectedRxMacroId);
+    if (!macro) return toast.error('Prescription macro not found');
+    const med = medications.find((m) => m.id === macro.medicationId) || null;
+    const nextSlots = macro.slots && typeof macro.slots === 'object' ? macro.slots : INIT_SLOTS;
+    setSlots(nextSlots);
+    setRxForm((f) => ({
+      ...f,
+      medicationId: med?.id || '',
+      selectedMed: med || null,
+      duration: macro.duration || '5 Days',
+      customDuration: '',
+      instructions: macro.instructions || '',
+      translatedInstructions: {},
+      quantity: Number(macro.quantity || 1),
+    }));
+    setMedSearch(med?.name || macro.medicationName || '');
+    setAutoQty(false);
+    toast.success(`Applied macro: ${macro.name}`);
+  };
+
+  const deleteRxMacro = () => {
+    if (!selectedRxMacroId) return toast.error('Select a prescription macro');
+    const macro = rxMacros.find((x) => x.id === selectedRxMacroId);
+    if (!macro) return;
+    setRxMacros((prev) => prev.filter((x) => x.id !== selectedRxMacroId));
+    setSelectedRxMacroId('');
+    toast.success(`Deleted macro: ${macro.name}`);
+  };
+
+  const translateRxInstructions = async () => {
+    const text = String(rxForm.instructions || '').trim();
+    if (!text) return toast.error('Write note text before translation');
+    if (!rxTargetLangs.length) return toast.error('Select at least one language');
+
+    setTranslatingRx(true);
+    try {
+      const res = await api.post('/prescriptions/translate', {
+        text,
+        targetLanguages: rxTargetLangs,
+        sourceLanguage: 'auto',
+      });
+      const translated = parseTranslatedInstructions(res.data.translations);
+      setRxForm((f) => ({ ...f, translatedInstructions: translated }));
+
+      const failed = Array.isArray(res.data.failures) ? res.data.failures.length : 0;
+      if (failed > 0) toast.warning(`Translated with ${failed} language failure(s)`);
+      else toast.success('Translation completed');
+    } catch (err) {
+      toast.error(err.response.data.message || 'Translation failed');
+    } finally {
+      setTranslatingRx(false);
+    }
+  };
 
   const addPrescription = async (e) => {
     e.preventDefault();
@@ -316,14 +571,18 @@ export default function AppointmentDetail() {
     try {
       const res = await api.post('/prescriptions', {
         appointmentId: id, medicationId: rxForm.medicationId,
-        dosage: rxForm.selectedMed?.dosage || '—',
+        dosage: rxForm.selectedMed.dosage || '',
         frequency: buildFrequency(slots), timing: buildTiming(slots),
-        duration: dur, instructions: rxForm.instructions, quantity: rxForm.quantity,
+        duration: dur,
+        instructions: rxForm.instructions,
+        instructionsOriginal: rxForm.instructions,
+        translatedInstructions: rxForm.translatedInstructions || {},
+        quantity: rxForm.quantity,
       });
       setPrescriptions(p => [...p, res.data]);
       setRxForm(INIT_RX); setSlots(INIT_SLOTS); setMedSearch(''); setAutoQty(true);
       toast.success('Prescription added');
-    } catch (err) { toast.error(err.response?.data?.message || 'Failed'); }
+    } catch (err) { toast.error(err.response.data.message || 'Failed'); }
   };
 
   const deletePrescription = async (pid) => {
@@ -331,12 +590,97 @@ export default function AppointmentDetail() {
     catch { toast.error('Failed'); }
   };
 
+  const orderLabTest = async (e) => {
+    e.preventDefault();
+    if (!labOrderForm.testName.trim()) return toast.error('Test name is required');
+    setLabOrdering(true);
+    try {
+      await labAPI.createTest({
+        ...labOrderForm,
+        appointmentId: id,
+        patientId: appt.patient.id,
+        price:labOrderForm.price ? parseFloat(labOrderForm.price) : undefined,
+      });
+      const res = await labAPI.getAllTests({ appointmentId: id });
+      setLabTests(res.data || []);
+      setLabOrderForm({ testName: '', category: '', labId: '', price: '', normalRange: '', unit: '' });
+      setLabOrderOpen(false);
+      toast.success('Lab test ordered');
+    } catch (err) { toast.error(err.response.data.message || 'Failed to order test'); }
+    finally { setLabOrdering(false); }
+  };
+
+  const cancelLabTest = async (testId) => {
+    try {
+      await labAPI.updateTest(testId, { status: 'cancelled' });
+      setLabTests(prev => prev.map(t => t.id === testId ? { ...t, status: 'cancelled' } : t));
+      toast.success('Test cancelled');
+    } catch { toast.error('Failed to cancel test'); }
+  };
+
+  const uploadDoc = async (e) => {
+    e.preventDefault();
+    if (!docForm.file) return toast.error('Please select a file');
+    if (!docForm.title.trim()) return toast.error('Please enter a title');
+    const patientId = appt.patient.id;
+    if (!patientId) return;
+    setDocUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('title', docForm.title);
+      fd.append('type', docForm.type);
+      fd.append('appointmentId', id);
+      fd.append('file', docForm.file);
+      await reportAPI.upload(patientId, fd);
+      const r = await reportAPI.getByPatient(patientId);
+      setDocuments((r.data || []).filter(d => d.appointmentId === id));
+      setDocForm({ title: '', type: 'other', file: null });
+      setDocUploadOpen(false);
+      toast.success('Document uploaded');
+    } catch { toast.error('Upload failed'); }
+    finally { setDocUploading(false); }
+  };
+
+  const downloadDoc = async (doc) => {
+    try {
+      const res = await reportAPI.download(doc.id);
+      const url = URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url; a.download = doc.originalName || doc.fileName; a.click();
+      URL.revokeObjectURL(url);
+    } catch { toast.error('Download failed'); }
+  };
+
   const downloadPDF = async (type) => {
     setDownloading(type);
     try {
       const res = type === 'prescription' ? await pdfAPI.prescription(id) : await pdfAPI.bill(id);
-      downloadBlob(res.data, `${type}-${appt?.appointmentNumber || id}.pdf`);
+      downloadBlob(res.data, `${type}-${appt.appointmentNumber || id}.pdf`);
     } catch { toast.error(`Failed to download ${type} PDF`); } finally { setDownloading(''); }
+  };
+
+  const consumePackageVisit = async (assignment) => {
+    if (!assignment?.id) return;
+    const note = window.prompt('Optional note for package usage') || '';
+    setConsumingPackageId(assignment.id);
+    try {
+      await packageAPI.consumeVisit(assignment.id, { appointmentId: id, notes: note || null });
+      const [apptRes, pkgRes] = await Promise.all([
+        api.get(`/appointments/${id}`),
+        packageAPI.getPatientAssignments(appt.patient.id, { status: 'active' }),
+      ]);
+      setAppt(apptRes.data);
+      setNotes((prev) => ({
+        ...prev,
+        notes: apptRes.data.notes || prev.notes,
+      }));
+      setPatientPackages(pkgRes.data || []);
+      toast.success('Package visit consumed and consultation fee adjusted');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to consume package visit');
+    } finally {
+      setConsumingPackageId('');
+    }
   };
 
   if (!appt) return (
@@ -348,7 +692,7 @@ export default function AppointmentDetail() {
   const patient = appt.patient;
   const isCompleted = appt.status === 'completed';
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  //  Render 
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -356,7 +700,7 @@ export default function AppointmentDetail() {
       {/* Header */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate(-1)} className="text-sm text-teal-600 font-medium">← Back</button>
+          <button onClick={() => navigate(-1)} className="text-sm text-teal-600 font-medium">Back</button>
           <h2 className="text-xl font-bold text-gray-800">Appointment #{appt.appointmentNumber}</h2>
           <span className={`text-xs px-2 py-1 rounded-full font-semibold ${isCompleted ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
             {appt.status}
@@ -365,11 +709,11 @@ export default function AppointmentDetail() {
         <div className="flex gap-2">
           <button onClick={() => downloadPDF('prescription')} disabled={!!downloading}
             className="flex items-center gap-1.5 px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors">
-            {downloading === 'prescription' ? '⏳' : '📄'} Prescription PDF
+            {downloading === 'prescription' ? 'Downloading...' : 'Prescription PDF'}
           </button>
           <button onClick={() => downloadPDF('bill')} disabled={!!downloading}
             className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
-            {downloading === 'bill' ? '⏳' : '🧾'} Bill PDF
+            {downloading === 'bill' ? 'Downloading...' : 'Bill PDF'}
           </button>
         </div>
       </div>
@@ -379,39 +723,39 @@ export default function AppointmentDetail() {
         <h3 className="font-semibold text-gray-700 mb-4 text-sm uppercase tracking-wide">Patient</h3>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           {[
-            ['Name', patient?.name], ['Patient ID', patient?.patientId], ['Phone', patient?.phone],
-            ['Blood Group', patient?.bloodGroup], ['Date of Birth', patient?.dateOfBirth],
-            ['Appointment', `${appt.appointmentDate} ${appt.appointmentTime?.slice(0,5) || ''}`],
+            ['Name', patient.name], ['Patient ID', patient.patientId], ['Phone', patient.phone],
+            ['Blood Group', patient.bloodGroup], ['Date of Birth', patient.dateOfBirth],
+            ['Appointment', `${appt.appointmentDate} ${appt.appointmentTime.slice(0,5) || ''}`],
           ].map(([label, val]) => (
             <div key={label} className="bg-gray-50 rounded-lg p-3">
               <div className="text-xs text-gray-400 uppercase tracking-wide">{label}</div>
-              <div className="text-sm font-semibold text-gray-700 mt-0.5">{val || '—'}</div>
+              <div className="text-sm font-semibold text-gray-700 mt-0.5">{val || '-'}</div>
             </div>
           ))}
         </div>
-        {patient?.allergies && (
+        {patient.allergies && (
           <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800">
-            ⚠️ <strong>Allergies:</strong> {patient.allergies}
+            <strong>Allergies:</strong> {patient.allergies}
           </div>
         )}
-        {patient?.medicalHistory && (
+        {patient.medicalHistory && (
           <div className="mt-2 bg-gray-50 rounded-lg p-3 text-sm">
             <span className="font-medium text-gray-600">Medical History:</span> {patient.medicalHistory}
           </div>
         )}
         {appt.reason && (
           <div className="mt-2 bg-blue-50 rounded-lg p-3 text-sm text-blue-800">
-            📝 <strong>Reason:</strong> {appt.reason}
+            x <strong>Reason:</strong> {appt.reason}
           </div>
         )}
       </div>
 
-      {/* ── VITALS ───────────────────────────────────────────────────────────── */}
+      {/*  VITALS  */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">🩺 Patient Vitals</h3>
+          <h3 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Patient Vitals</h3>
           {vitalsRecorded && (
-            <span className="text-xs bg-green-100 text-green-700 px-2.5 py-1 rounded-full font-medium">✓ Recorded</span>
+            <span className="text-xs bg-green-100 text-green-700 px-2.5 py-1 rounded-full font-medium">Recorded</span>
           )}
         </div>
 
@@ -444,9 +788,9 @@ export default function AppointmentDetail() {
                 );
               })}
 
-              {/* Blood Pressure — combined systolic/diastolic */}
+              {/* Blood Pressure  combined systolic/diastolic */}
               <div className="bg-gray-50 rounded-xl p-3">
-                <div className="text-xs text-gray-500 mb-1">💉 Blood Pressure</div>
+                <div className="text-xs text-gray-500 mb-1">Blood Pressure</div>
                 <div className="flex items-center gap-1">
                   <input type="number" value={vitalsForm.systolic} placeholder="120"
                     onChange={e => setV('systolic', e.target.value)}
@@ -460,7 +804,7 @@ export default function AppointmentDetail() {
                 {(vitalsForm.systolic || vitalsForm.diastolic) && (
                   <div className="flex items-center gap-1 mt-1.5">
                     <div className="w-2 h-2 rounded-full" style={{ background: STATUS_COLORS[vitalStatus(vitalsForm.systolic, [90, 140])] }} />
-                    <span className="text-xs text-gray-500">{vitalsForm.systolic || '—'}/{vitalsForm.diastolic || '—'}</span>
+                    <span className="text-xs text-gray-500">{vitalsForm.systolic || '-'} / {vitalsForm.diastolic || '-'}</span>
                   </div>
                 )}
               </div>
@@ -519,7 +863,7 @@ export default function AppointmentDetail() {
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
               {/* Weight */}
               <div className="bg-gray-50 rounded-xl p-3">
-                <div className="text-xs text-gray-500 mb-1">⚖️ Weight</div>
+                <div className="text-xs text-gray-500 mb-1">a Weight</div>
                 <div className="flex items-center gap-1">
                   <input type="number" step="0.1" value={vitalsForm.weight} placeholder="70"
                     onChange={e => setV('weight', e.target.value)}
@@ -530,7 +874,7 @@ export default function AppointmentDetail() {
 
               {/* Height */}
               <div className="bg-gray-50 rounded-xl p-3">
-                <div className="text-xs text-gray-500 mb-1">📏 Height</div>
+                <div className="text-xs text-gray-500 mb-1">x Height</div>
                 <div className="flex items-center gap-1">
                   <input type="number" step="0.1" value={vitalsForm.height} placeholder="170"
                     onChange={e => setV('height', e.target.value)}
@@ -539,11 +883,11 @@ export default function AppointmentDetail() {
                 </div>
               </div>
 
-              {/* BMI — auto */}
+              {/* BMI  auto */}
               <div className="bg-gray-50 rounded-xl p-3">
-                <div className="text-xs text-gray-500 mb-1">📊 BMI</div>
+                <div className="text-xs text-gray-500 mb-1">x` BMI</div>
                 <div className="font-bold text-lg" style={{ color: bmiColor(bmi) }}>
-                  {bmi || '—'}
+                  {bmi || ''}
                 </div>
                 {bmi && (
                   <div className="text-xs mt-0.5" style={{ color: bmiColor(bmi) }}>{bmiLabel(bmi)}</div>
@@ -552,7 +896,7 @@ export default function AppointmentDetail() {
 
               {/* Blood Sugar */}
               <div className="bg-gray-50 rounded-xl p-3 col-span-1 md:col-span-1">
-                <div className="text-xs text-gray-500 mb-1">🩸 Blood Sugar</div>
+                <div className="text-xs text-gray-500 mb-1">x Blood Sugar</div>
                 <div className="flex items-center gap-1 mb-1.5">
                   <input type="number" step="0.1" value={vitalsForm.bloodSugar} placeholder="95"
                     onChange={e => setV('bloodSugar', e.target.value)}
@@ -623,40 +967,84 @@ export default function AppointmentDetail() {
             )}
             <textarea rows={2} value={vitalsForm.vitalNotes}
               onChange={e => setV('vitalNotes', e.target.value)}
-              placeholder="Additional observations, nurse notes…"
+              placeholder="Additional observations, nurse notes"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-500 resize-none" />
           </div>
 
           <button type="submit" disabled={vitalsSaving}
             className="w-full bg-indigo-600 text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-colors">
-            {vitalsSaving ? 'Saving…' : vitalsRecorded ? '💾 Update Vitals' : '💾 Save Vitals'}
+            {vitalsSaving ? 'Saving...' : vitalsRecorded ? 'Update Vitals' : 'Save Vitals'}
           </button>
         </form>
       </div>
 
-      {/* ── CLINICAL NOTES ───────────────────────────────────────────────────── */}
+      {/*  CLINICAL NOTES  */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
         <h3 className="font-semibold text-gray-700 mb-4 text-sm uppercase tracking-wide">Clinical Notes</h3>
+        <div className="mb-4 p-3 rounded-lg border border-teal-100 bg-teal-50">
+          <div className="text-xs font-semibold text-teal-700 mb-2">Quick Templates</div>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+            <input
+              value={templateName}
+              onChange={(e) => setTemplateName(e.target.value)}
+              placeholder="Template name"
+              className="border border-teal-200 rounded-lg px-2.5 py-2 text-xs focus:outline-none focus:border-teal-400 bg-white"
+            />
+            <button
+              type="button"
+              onClick={saveNoteTemplate}
+              className="text-xs bg-teal-600 text-white px-3 py-2 rounded-lg hover:bg-teal-700 font-medium"
+            >
+              Save Current
+            </button>
+            <select
+              value={selectedTemplateId}
+              onChange={(e) => setSelectedTemplateId(e.target.value)}
+              className="border border-teal-200 rounded-lg px-2.5 py-2 text-xs focus:outline-none focus:border-teal-400 bg-white"
+            >
+              <option value="">Select template</option>
+              {noteTemplates.map((tpl) => (
+                <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
+              ))}
+            </select>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={applyNoteTemplate}
+                className="flex-1 text-xs bg-white text-teal-700 border border-teal-300 px-3 py-2 rounded-lg hover:bg-teal-100 font-medium"
+              >
+                Apply
+              </button>
+              <button
+                type="button"
+                onClick={deleteNoteTemplate}
+                className="flex-1 text-xs bg-white text-red-600 border border-red-200 px-3 py-2 rounded-lg hover:bg-red-50 font-medium"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Diagnosis</label>
             <textarea rows={2} value={notes.diagnosis} onChange={e => setNotes(n => ({ ...n, diagnosis: e.target.value }))}
-              placeholder="Enter diagnosis…"
+              placeholder="Enter diagnosis"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-500 resize-none" />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Doctor's Notes</label>
             <textarea rows={2} value={notes.notes} onChange={e => setNotes(n => ({ ...n, notes: e.target.value }))}
-              placeholder="Observations, follow-up instructions…"
+              placeholder="Observations, follow-up instructions"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-500 resize-none" />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Treatment Done</label>
             <textarea rows={2} value={notes.treatmentDone} onChange={e => setNotes(n => ({ ...n, treatmentDone: e.target.value }))}
-              placeholder="Describe treatment/procedure done for this appointment…"
+              placeholder="Describe treatment/procedure done for this appointment"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-500 resize-none" />
           </div>
-          {/* ── Bill Items ── */}
+          {/*  Bill Items  */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="block text-sm font-medium text-gray-700">Bill Items</label>
@@ -673,7 +1061,7 @@ export default function AppointmentDetail() {
                 {/* Header */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 130px 60px 80px 70px 28px', gap: 4 }}
                   className="text-xs font-semibold text-gray-500 pb-1 border-b border-gray-100">
-                  <span>Description</span><span>Category</span><span>Qty</span><span>Unit ₹</span><span className="text-right">Amount</span><span/>
+                  <span>Description</span><span>Category</span><span>Qty</span><span>Unit Price</span><span className="text-right">Amount</span><span/>
                 </div>
                 {billItems.map(item => (
                   <div key={item._key} style={{ display: 'grid', gridTemplateColumns: '1fr 130px 60px 80px 70px 28px', gap: 4, alignItems: 'center' }}>
@@ -691,9 +1079,9 @@ export default function AppointmentDetail() {
                     <input type="number" min="0" step="0.01" value={item.unitPrice} placeholder="0.00"
                       onChange={e => updateBillRow(item._key, 'unitPrice', e.target.value)}
                       className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-teal-500" />
-                    <span className="text-xs font-semibold text-gray-700 text-right pr-1">₹{Number(item.amount || 0).toFixed(2)}</span>
+                    <span className="text-xs font-semibold text-gray-700 text-right pr-1">{Number(item.amount || 0).toFixed(2)}</span>
                     <button type="button" onClick={() => removeBillRow(item._key)}
-                      className="text-red-300 hover:text-red-500 text-base font-bold text-center">×</button>
+                      className="text-red-300 hover:text-red-500 text-base font-bold text-center">x</button>
                   </div>
                 ))}
               </div>
@@ -702,20 +1090,20 @@ export default function AppointmentDetail() {
             {/* Totals & pay status */}
             <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between flex-wrap gap-3">
               <div className="text-xs text-gray-500 space-y-0.5">
-                {Number(appt?.fee || 0) > 0 && <div>Consultation fee: <strong>₹{Number(appt.fee).toFixed(2)}</strong></div>}
-                <div>Treatment items: <strong>₹{billItems.reduce((s,i) => s + Number(i.amount||0), 0).toFixed(2)}</strong></div>
+                {Number(appt.fee || 0) > 0 && <div>Consultation fee: <strong>{Number(appt.fee).toFixed(2)}</strong></div>}
+                <div>Treatment items: <strong>{billItems.reduce((s,i) => s + Number(i.amount||0), 0).toFixed(2)}</strong></div>
                 <div className="text-sm font-bold text-gray-800 pt-1">
-                  Total: ₹{(Number(appt?.fee || 0) + billItems.reduce((s,i) => s + Number(i.amount||0), 0)).toFixed(2)}
+                  Total: {(Number(appt.fee || 0) + billItems.reduce((s,i) => s + Number(i.amount||0), 0)).toFixed(2)}
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <button type="button" onClick={saveBill} disabled={billSaving}
                   className="text-xs bg-teal-600 text-white px-3 py-1.5 rounded-lg hover:bg-teal-700 disabled:opacity-50 font-medium">
-                  {billSaving ? 'Saving…' : 'Save Bill'}
+                  {billSaving ? 'Saving' : 'Save Bill'}
                 </button>
                 <button type="button" onClick={togglePaid}
-                  className={`text-xs px-3 py-1.5 rounded-lg font-medium border transition-colors ${appt?.isPaid ? 'bg-green-50 text-green-700 border-green-300 hover:bg-green-100' : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'}`}>
-                  {appt?.isPaid ? '✓ Paid' : 'Mark as Paid'}
+                  className={`text-xs px-3 py-1.5 rounded-lg font-medium border transition-colors ${appt.isPaid ? 'bg-green-50 text-green-700 border-green-300 hover:bg-green-100' : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'}`}>
+                  {appt.isPaid ? 'Paid' : 'Mark as Paid'}
                 </button>
               </div>
             </div>
@@ -723,21 +1111,59 @@ export default function AppointmentDetail() {
           <div className="flex items-center gap-3">
             <button onClick={saveNotes} disabled={saving}
               className="bg-gray-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-gray-700 disabled:opacity-50">
-              {saving ? 'Saving…' : 'Save Notes'}
+              {saving ? 'Saving' : 'Save Notes'}
             </button>
             {!isCompleted ? (
               <button onClick={completeConsultation} disabled={saving}
                 className="bg-green-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50">
-                ✓ Complete Consultation
+                S Complete Consultation
               </button>
             ) : (
-              <span className="text-sm text-green-600 font-medium">✓ Consultation completed</span>
+              <span className="text-sm text-green-600 font-medium">S Consultation completed</span>
             )}
           </div>
         </div>
       </div>
 
-      {/* ── PRESCRIPTIONS ────────────────────────────────────────────────────── */}
+      {/*  PRESCRIPTIONS  */}
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
+        <h3 className="font-semibold text-gray-700 mb-4 text-sm uppercase tracking-wide">Patient Packages</h3>
+        {packagesLoading ? (
+          <div className="text-sm text-gray-500">Loading active packages...</div>
+        ) : patientPackages.length === 0 ? (
+          <div className="text-sm text-gray-500">No active package found for this patient.</div>
+        ) : (
+          <div className="space-y-2">
+            {patientPackages.map((pkg) => {
+              const used = Number(pkg.usedVisits || 0);
+              const total = Number(pkg.totalVisits || 0);
+              const remaining = Math.max(total - used, 0);
+              return (
+                <div key={pkg.id} className="border border-teal-100 bg-teal-50 rounded-lg px-3 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-semibold text-teal-900">{pkg.plan?.name || 'Package Plan'}</div>
+                      <div className="text-xs text-teal-700">
+                        Visits: {used}/{total} | Remaining: {remaining} | Expiry: {pkg.expiryDate || '-'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => consumePackageVisit(pkg)}
+                      disabled={remaining <= 0 || consumingPackageId === pkg.id}
+                      className="text-xs bg-teal-600 text-white px-3 py-1.5 rounded-md hover:bg-teal-700 disabled:opacity-50"
+                    >
+                      {consumingPackageId === pkg.id ? 'Applying...' : 'Use Package Visit'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/*  PRESCRIPTIONS  */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
         <h3 className="font-semibold text-gray-700 mb-4 text-sm uppercase tracking-wide">Prescriptions</h3>
 
@@ -749,20 +1175,29 @@ export default function AppointmentDetail() {
                   <div className="w-7 h-7 rounded-full bg-green-100 flex items-center justify-center text-xs font-bold text-green-700 flex-shrink-0">{idx + 1}</div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <span className="font-semibold text-gray-800">{p.medication?.name}</span>
-                      {p.medication?.dosage && <span className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">{p.medication.dosage}</span>}
-                      {p.medication?.category && <span className="text-xs text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded capitalize">{p.medication.category}</span>}
+                      <span className="font-semibold text-gray-800">{p.medication.name}</span>
+                      {p.medication.dosage && <span className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">{p.medication.dosage}</span>}
+                      {p.medication.category && <span className="text-xs text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded capitalize">{p.medication.category}</span>}
                     </div>
-                    {p.medication?.composition && <div className="text-xs text-blue-500 mb-2">⚗ {p.medication.composition}</div>}
+                    {p.medication.composition && <div className="text-xs text-blue-500 mb-2">Composition: {p.medication.composition}</div>}
                     <div className="flex items-center gap-2 flex-wrap">
                       {p.frequency && <span className="font-mono font-bold text-base text-teal-700 bg-teal-50 border border-teal-100 px-2.5 py-0.5 rounded-lg tracking-widest">{p.frequency}</span>}
                       {p.timing && <span className="text-xs text-gray-500">{p.timing}</span>}
-                      {p.duration && <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">📅 {p.duration}</span>}
+                      {p.duration && <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">Duration: {p.duration}</span>}
                       {p.quantity && <span className="text-xs text-gray-500 ml-auto">Qty: <strong>{p.quantity}</strong></span>}
                     </div>
-                    {p.instructions && <div className="mt-1.5 text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded px-2.5 py-1.5">📝 {p.instructions}</div>}
+                    {(p.instructionsOriginal || p.instructions) && (
+                      <div className="mt-1.5 text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded px-2.5 py-1.5">
+                        <strong>Original:</strong> {p.instructionsOriginal || p.instructions}
+                      </div>
+                    )}
+                    {Object.entries(parseTranslatedInstructions(p.translatedInstructions)).map(([code, text]) => (
+                      <div key={code} className="mt-1 text-xs text-cyan-800 bg-cyan-50 border border-cyan-100 rounded px-2.5 py-1.5">
+                        <strong>{LANG_LABEL_BY_CODE[code] || code.toUpperCase()}:</strong> {text}
+                      </div>
+                    ))}
                   </div>
-                  <button onClick={() => deletePrescription(p.id)} className="text-red-300 hover:text-red-500 text-sm p-1 flex-shrink-0">✕</button>
+                  <button onClick={() => deletePrescription(p.id)} className="text-red-300 hover:text-red-500 text-sm p-1 flex-shrink-0">x</button>
                 </div>
               </div>
             ))}
@@ -776,10 +1211,10 @@ export default function AppointmentDetail() {
           <div className="relative" ref={medRef}>
             <label className="text-xs font-medium text-gray-500 mb-1 block">Medicine *</label>
             <div className="relative">
-              <span className="absolute left-3 top-2.5 text-gray-400 text-sm">🔍</span>
+              <span className="absolute left-3 top-2.5 text-gray-400 text-sm"></span>
               <input value={medSearch} onFocus={() => setMedOpen(true)}
                 onChange={e => { setMedSearch(e.target.value); setMedOpen(true); if (!e.target.value) clearMed(); }}
-                placeholder="Type name, generic name or composition…"
+                placeholder="Type name, generic name or composition"
                 className="w-full border border-gray-200 rounded-lg pl-8 pr-3 py-2 text-sm focus:outline-none focus:border-teal-500" />
             </div>
             {rxForm.selectedMed && (
@@ -787,13 +1222,13 @@ export default function AppointmentDetail() {
                 <span className="font-semibold text-teal-800">{rxForm.selectedMed.name}</span>
                 {rxForm.selectedMed.dosage && <span className="text-teal-600 text-xs">{rxForm.selectedMed.dosage}</span>}
                 <span className="text-xs bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded capitalize">{rxForm.selectedMed.category}</span>
-                {rxForm.selectedMed.stockQuantity < 10 && <span className="text-xs text-red-500">Low stock</span>}
-                <button type="button" onClick={clearMed} className="ml-auto text-gray-400 hover:text-red-500">✕</button>
+                {rxForm.selectedMed.stockQuantity < 10 && <span className="text-xs text-red-500 font-semibold">Low stock: {rxForm.selectedMed.stockQuantity} remaining</span>}
+                <button type="button" onClick={clearMed} className="ml-auto text-gray-400 hover:text-red-500">x</button>
               </div>
             )}
             {allergyWarning && (
               <div className="mt-1.5 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-700 font-medium">
-                ⚠️ Patient has a recorded allergy that may relate to this medication
+                Patient has a recorded allergy that may relate to this medication
               </div>
             )}
             {medOpen && medSearch && (
@@ -808,7 +1243,7 @@ export default function AppointmentDetail() {
                       {m.dosage && <span className="text-xs text-gray-400">{m.dosage}</span>}
                       <span className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded capitalize ml-auto">{m.category}</span>
                     </div>
-                    {m.composition && <div className="text-xs text-blue-500 mt-0.5">⚗ {m.composition}</div>}
+                    {m.composition && <div className="text-xs text-blue-500 mt-0.5">Composition: {m.composition}</div>}
                     {m.genericName && <div className="text-xs text-gray-400">{m.genericName}</div>}
                     <div className="text-xs mt-0.5">Stock: <span className={m.stockQuantity < 10 ? 'text-red-500 font-semibold' : 'text-gray-400'}>{m.stockQuantity}</span></div>
                   </button>
@@ -873,7 +1308,7 @@ export default function AppointmentDetail() {
               ))}
               <input value={rxForm.customDuration}
                 onChange={e => { setRxForm(f => ({ ...f, customDuration: e.target.value, duration: '' })); setAutoQty(true); }}
-                placeholder="Custom…"
+                placeholder="Custom"
                 className={`px-3 py-1 rounded-full text-xs border focus:outline-none w-24 ${rxForm.customDuration ? 'border-teal-400 bg-teal-50' : 'border-gray-200'}`} />
             </div>
           </div>
@@ -896,12 +1331,91 @@ export default function AppointmentDetail() {
           {/* Instructions */}
           <div>
             <label className="text-xs font-medium text-gray-500 mb-1 block">
-              Instructions <span className="text-gray-400">(any language — Kannada, Hindi, English…)</span>
+              Instructions <span className="text-gray-400">(any language - Kannada, Hindi, English)</span>
             </label>
             <textarea rows={2} lang="mul" value={rxForm.instructions}
-              onChange={e => setRxForm(f => ({ ...f, instructions: e.target.value }))}
-              placeholder="ಊಟದ ನಂತರ ತೆಗೆದುಕೊಳ್ಳಿ · After food · खाने के बाद लें"
+              onChange={e => setRxForm(f => ({ ...f, instructions: e.target.value, translatedInstructions: {} }))}
+              placeholder="After food - Use as advised by doctor"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-500 resize-none" />
+            <div className="mt-2 flex flex-wrap gap-2">
+              {RX_INSTRUCTION_CHIPS.map((chip) => (
+                <button
+                  key={chip}
+                  type="button"
+                  onClick={() => addInstructionChip(chip)}
+                  className="px-2 py-1 rounded-full text-xs border bg-white text-gray-600 border-gray-200 hover:border-teal-300"
+                >
+                  {chip}
+                </button>
+              ))}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {PRESCRIPTION_LANGS.map((lang) => (
+                <button
+                  key={lang.code}
+                  type="button"
+                  onClick={() => toggleRxTargetLang(lang.code)}
+                  className={`px-2 py-1 rounded-full text-xs border ${
+                    rxTargetLangs.includes(lang.code)
+                      ? 'bg-teal-600 text-white border-teal-600'
+                      : 'bg-white text-gray-600 border-gray-200'
+                  }`}
+                >
+                  {lang.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={translateRxInstructions}
+                disabled={translatingRx}
+                className="px-3 py-1 rounded-full text-xs font-semibold bg-indigo-600 text-white border border-indigo-600 disabled:opacity-50"
+              >
+                {translatingRx ? 'Translating...' : 'Translate Note'}
+              </button>
+            </div>
+            {Object.keys(rxForm.translatedInstructions || {}).length > 0 && (
+              <div className="mt-2 space-y-1">
+                <div className="text-[11px] font-semibold text-gray-500 uppercase">Translated Preview</div>
+                {Object.entries(rxForm.translatedInstructions).map(([code, text]) => (
+                  <div key={code} className="text-xs text-cyan-800 bg-cyan-50 border border-cyan-100 rounded px-2.5 py-1.5">
+                    <strong>{LANG_LABEL_BY_CODE[code] || code.toUpperCase()}:</strong> {text}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="border border-gray-200 rounded-xl p-3 bg-gray-50">
+            <div className="text-xs font-semibold text-gray-600 uppercase mb-2">Prescription Macros</div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <input
+                value={rxMacroName}
+                onChange={(e) => setRxMacroName(e.target.value)}
+                placeholder="Macro name (e.g. Viral Fever Adult)"
+                className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-500"
+              />
+              <select
+                value={selectedRxMacroId}
+                onChange={(e) => setSelectedRxMacroId(e.target.value)}
+                className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-500"
+              >
+                <option value="">Select macro</option>
+                {rxMacros.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+              <div className="flex gap-2">
+                <button type="button" onClick={saveRxMacro} className="px-3 py-2 text-xs rounded-lg bg-teal-600 text-white font-semibold">
+                  Save Macro
+                </button>
+                <button type="button" onClick={applyRxMacro} className="px-3 py-2 text-xs rounded-lg bg-indigo-600 text-white font-semibold">
+                  Apply
+                </button>
+                <button type="button" onClick={deleteRxMacro} className="px-3 py-2 text-xs rounded-lg bg-red-50 text-red-700 border border-red-200 font-semibold">
+                  Delete
+                </button>
+              </div>
+            </div>
           </div>
 
           <button type="submit" className="w-full bg-teal-600 text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-teal-700 transition-colors">
@@ -910,17 +1424,194 @@ export default function AppointmentDetail() {
         </form>
       </div>
 
-      {/* ── PREVIOUS VISITS ───────────────────────────────────────────────────── */}
+      {/*  LAB TESTS  */}
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Lab Tests</h3>
+          <button onClick={() => setLabOrderOpen(o => !o)}
+            className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1 rounded-lg hover:bg-indigo-100 font-medium">
+            {labOrderOpen ? 'Cancel' : '+ Order Test'}
+          </button>
+        </div>
+
+        {/* Order form */}
+        {labOrderOpen && (
+          <form onSubmit={orderLabTest} className="border-2 border-dashed border-indigo-200 rounded-xl p-4 mb-4 space-y-3 bg-indigo-50/30">
+            <div className="text-xs font-semibold text-indigo-700 mb-1">New Lab Test Order</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-gray-500 block mb-1">Test Name *</label>
+                <input value={labOrderForm.testName} required onChange={e => setLabOrderForm(f => ({ ...f, testName: e.target.value }))}
+                  placeholder="e.g. Complete Blood Count"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-500 block mb-1">Category</label>
+                <input value={labOrderForm.category} onChange={e => setLabOrderForm(f => ({ ...f, category: e.target.value }))}
+                  placeholder="e.g. Blood, Urine, Imaging"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-500 block mb-1">Lab</label>
+                <SearchableSelect
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400"
+                  value={labOrderForm.labId}
+                  onChange={(value) => setLabOrderForm((f) => ({ ...f, labId: value }))}
+                  options={labs.map((l) => ({ value: l.id, label: l.name }))}
+                  placeholder="Search lab..."
+                  emptyLabel="-- Select Lab --"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-500 block mb-1">Price (Rs)</label>
+                <input type="number" min="0" step="0.01" value={labOrderForm.price} onChange={e => setLabOrderForm(f => ({ ...f, price: e.target.value }))}
+                  placeholder="Optional"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-500 block mb-1">Normal Range</label>
+                <input value={labOrderForm.normalRange} onChange={e => setLabOrderForm(f => ({ ...f, normalRange: e.target.value }))}
+                  placeholder="e.g. 4.5-11.0"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-500 block mb-1">Unit</label>
+                <input value={labOrderForm.unit} onChange={e => setLabOrderForm(f => ({ ...f, unit: e.target.value }))}
+                  placeholder="e.g. x10^3/uL"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+              </div>
+            </div>
+            <button type="submit" disabled={labOrdering}
+              className="w-full bg-indigo-600 text-white py-2 rounded-lg text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+              {labOrdering ? 'Ordering' : '+ Order Lab Test'}
+            </button>
+          </form>
+        )}
+
+        {/* Tests list */}
+        {labTests.length === 0 ? (
+          <div className="text-sm text-gray-400 italic text-center py-4">No lab tests ordered for this appointment</div>
+        ) : (
+          <div className="space-y-2">
+            {labTests.map(t => {
+              const statusColors = { ordered: 'bg-blue-100 text-blue-700', sample_collected: 'bg-yellow-100 text-yellow-700', processing: 'bg-orange-100 text-orange-700', completed: 'bg-green-100 text-green-700', cancelled: 'bg-red-100 text-red-500' };
+              const statusLabels = { ordered: 'Ordered', sample_collected: 'Sample Collected', processing: 'Processing', completed: 'Completed', cancelled: 'Cancelled' };
+              return (
+                <div key={t.id} className="bg-gray-50 rounded-xl p-3 border border-gray-100">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-sm text-gray-800">{t.testName}
+                        {t.testCode && <span className="text-xs font-normal text-gray-400 ml-1">({t.testCode})</span>}
+                      </div>
+                      <div className="text-xs text-gray-400 mt-0.5 flex flex-wrap gap-x-3">
+                        {t.category && <span>{t.category}</span>}
+                        {t.lab.name && <span>Lab: {t.lab.name}</span>}
+                        {t.price > 0 && <span>Rs {Number(t.price).toFixed(2)}</span>}
+                        {t.normalRange && <span>Normal: {t.normalRange} {t.unit}</span>}
+                      </div>
+                      {t.status === 'completed' && t.result && (
+                        <div className="mt-1.5 bg-green-50 border border-green-100 rounded-lg px-2.5 py-1.5 text-xs text-green-800">
+                          <strong>Result:</strong> {t.resultValue && <span className="font-bold mr-1">{t.resultValue}</span>}
+                          {t.result}
+                          {t.isAbnormal && <span className="ml-1 bg-red-100 text-red-600 px-1 py-0.5 rounded">Abnormal</span>}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${statusColors[t.status] || 'bg-gray-100 text-gray-600'}`}>
+                        {statusLabels[t.status] || t.status}
+                      </span>
+                      {(t.status === 'ordered' || t.status === 'sample_collected') && (
+                        <button onClick={() => cancelLabTest(t.id)}
+                          className="text-xs text-red-400 hover:text-red-600 font-medium">Cancel</button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/*  DOCUMENTS  */}
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Documents</h3>
+          <button onClick={() => setDocUploadOpen(o => !o)}
+            className="text-xs bg-purple-50 text-purple-700 border border-purple-200 px-3 py-1 rounded-lg hover:bg-purple-100 font-medium">
+            {docUploadOpen ? 'Cancel' : '+ Upload File'}
+          </button>
+        </div>
+
+        {/* Upload form */}
+        {docUploadOpen && (
+          <form onSubmit={uploadDoc} className="border-2 border-dashed border-purple-200 rounded-xl p-4 mb-4 space-y-3 bg-purple-50/30">
+            <div className="text-xs font-semibold text-purple-700 mb-1">Upload Document</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-gray-500 block mb-1">Title *</label>
+                <input value={docForm.title} required onChange={e => setDocForm(f => ({ ...f, title: e.target.value }))}
+                  placeholder="e.g. Chest X-Ray Report"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-400" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-500 block mb-1">Type</label>
+                <select value={docForm.type} onChange={e => setDocForm(f => ({ ...f, type: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-400">
+                  {['lab_report','radiology','discharge_summary','prescription','medical_certificate','other'].map(t =>
+                    <option key={t} value={t}>{t.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase())}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-500 block mb-1">File *</label>
+              <input type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                onChange={e => setDocForm(f => ({ ...f, file: e.target.files[0] }))}
+                className="w-full text-sm text-gray-600" required />
+              <div className="text-xs text-gray-400 mt-1">PDF, JPG, PNG, DOC (max 10 MB)</div>
+            </div>
+            <button type="submit" disabled={docUploading}
+              className="w-full bg-purple-600 text-white py-2 rounded-lg text-sm font-semibold hover:bg-purple-700 disabled:opacity-50 transition-colors">
+              {docUploading ? 'Uploading...' : 'Upload Document'}
+            </button>
+          </form>
+        )}
+
+        {documents.length === 0 ? (
+          <div className="text-sm text-gray-400 italic text-center py-4">No documents attached to this appointment</div>
+        ) : (
+          <div className="space-y-2">
+            {documents.map(doc => (
+              <div key={doc.id} className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-3 border border-gray-100">
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm text-gray-800 truncate">{doc.title}</div>
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    {doc.type.replace(/_/g,' ')} - {doc.originalName}
+                    {doc.fileSize && <span> - {(doc.fileSize / 1024).toFixed(0)} KB</span>}
+                  </div>
+                </div>
+                <button onClick={() => downloadDoc(doc)}
+                  className="ml-3 text-xs bg-gray-700 text-white px-3 py-1.5 rounded-lg hover:bg-gray-800 font-medium transition-colors">
+                  Download
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/*  PREVIOUS VISITS  */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
         <h3 className="font-semibold text-gray-700 mb-4 text-sm uppercase tracking-wide">Previous Visits</h3>
         {historyLoading ? (
-          <div className="text-sm text-gray-400">Loading history…</div>
+          <div className="text-sm text-gray-400">Loading history</div>
         ) : history.length === 0 ? (
           <div className="text-sm text-gray-500 bg-gray-50 rounded-lg p-4 text-center">No previous visits found</div>
         ) : (
           <div className="space-y-4">
             {history.map(visit => {
-              const vt = visit.vitals;
+              const vt = visit.vitals || null;
               const symptomList = vt?.symptoms ? parseSymptoms(vt.symptoms) : [];
               return (
                 <div key={visit.id} className="border border-gray-100 rounded-xl p-4 bg-gray-50 hover:bg-white transition-colors">
@@ -930,42 +1621,42 @@ export default function AppointmentDetail() {
                       {visit.appointmentTime && <span className="text-xs text-gray-500">at {visit.appointmentTime.slice(0,5)}</span>}
                       <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${visit.status === 'completed' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>{visit.status}</span>
                     </div>
-                    <span className="text-xs text-gray-500">Dr. {visit.doctor?.name || '—'}{visit.doctor?.specialization ? ` · ${visit.doctor.specialization}` : ''}</span>
+                    <span className="text-xs text-gray-500">Dr. {visit.doctor.name || '-'}{visit.doctor.specialization ? ` - ${visit.doctor.specialization}` : ''}</span>
                   </div>
 
                   {/* Vitals snapshot */}
                   {vt && vt.id && (
                     <div className="bg-white border border-gray-100 rounded-lg px-3 py-2 mb-3 text-xs text-gray-600 flex flex-wrap gap-x-4 gap-y-1">
-                      {vt.heartRate && <span>❤️ <strong>{vt.heartRate}</strong> bpm</span>}
-                      {(vt.systolic || vt.diastolic) && <span>💉 <strong>{vt.systolic||'—'}/{vt.diastolic||'—'}</strong> mmHg</span>}
-                      {vt.temperature && <span>🌡️ <strong>{vt.temperature}</strong>°C</span>}
-                      {vt.spo2 && <span>💧 <strong>{vt.spo2}</strong>%</span>}
-                      {vt.weight && <span>⚖️ <strong>{vt.weight}</strong> kg</span>}
-                      {vt.bmi && <span>📊 BMI <strong>{vt.bmi}</strong> ({bmiLabel(vt.bmi)})</span>}
-                      {vt.bloodSugar && <span>🩸 <strong>{vt.bloodSugar}</strong> mg/dL</span>}
+                      {vt.heartRate && <span>HR <strong>{vt.heartRate}</strong> bpm</span>}
+                      {(vt.systolic || vt.diastolic) && <span>BP <strong>{vt.systolic||'-'}/{vt.diastolic||'-'}</strong> mmHg</span>}
+                      {vt.temperature && <span>Temp <strong>{vt.temperature}</strong>C</span>}
+                      {vt.spo2 && <span>SpO2 <strong>{vt.spo2}</strong>%</span>}
+                      {vt.weight && <span>Weight <strong>{vt.weight}</strong> kg</span>}
+                      {vt.bmi && <span>BMI <strong>{vt.bmi}</strong> ({bmiLabel(vt.bmi)})</span>}
+                      {vt.bloodSugar && <span>Sugar <strong>{vt.bloodSugar}</strong> mg/dL</span>}
                       {symptomList.length > 0 && (
-                        <span className="text-orange-600">🤒 {symptomList.join(', ')}</span>
+                        <span className="text-orange-600">Symptoms: {symptomList.join(', ')}</span>
                       )}
                     </div>
                   )}
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm mb-3">
-                    <div><div className="text-xs text-gray-400 uppercase mb-0.5">Reason</div><div className="text-gray-700">{visit.reason || '—'}</div></div>
-                    <div><div className="text-xs text-gray-400 uppercase mb-0.5">Diagnosis</div><div className="text-gray-700">{visit.diagnosis || '—'}</div></div>
+                    <div><div className="text-xs text-gray-400 uppercase mb-0.5">Reason</div><div className="text-gray-700">{visit.reason || '-'}</div></div>
+                    <div><div className="text-xs text-gray-400 uppercase mb-0.5">Diagnosis</div><div className="text-gray-700">{visit.diagnosis || '-'}</div></div>
                     {visit.notes && <div className="md:col-span-2"><div className="text-xs text-gray-400 uppercase mb-0.5">Notes</div><div className="text-gray-700">{visit.notes}</div></div>}
                   </div>
 
-                  {visit.prescriptions?.length > 0 && (
+                  {visit.prescriptions.length > 0 && (
                     <div>
                       <div className="text-xs text-gray-400 uppercase mb-1.5">Medicines</div>
                       <div className="space-y-1">
                         {visit.prescriptions.map(rx => (
                           <div key={rx.id} className="flex items-center gap-2 text-sm text-gray-700">
-                            <span className="font-medium">{rx.medication?.name}</span>
-                            {rx.medication?.dosage && <span className="text-xs text-gray-400">{rx.medication.dosage}</span>}
+                            <span className="font-medium">{rx.medication.name}</span>
+                            {rx.medication.dosage && <span className="text-xs text-gray-400">{rx.medication.dosage}</span>}
                             {rx.frequency && <span className="font-mono text-xs text-teal-600 bg-teal-50 px-1.5 py-0.5 rounded">{rx.frequency}</span>}
                             {rx.timing && <span className="text-xs text-gray-500">{rx.timing}</span>}
-                            {rx.duration && <span className="text-xs text-gray-400">· {rx.duration}</span>}
+                            {rx.duration && <span className="text-xs text-gray-400"> {rx.duration}</span>}
                           </div>
                         ))}
                       </div>

@@ -3,6 +3,7 @@ import { labAPI, patientAPI, hospitalAPI } from '../services/api';
 import Modal from '../components/Modal';
 import Table from '../components/Table';
 import Badge from '../components/Badge';
+import SearchableSelect from '../components/SearchableSelect';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
 
@@ -42,7 +43,7 @@ export default function Labs() {
       if (editingLab) { await labAPI.update(editingLab.id, labForm); toast.success('Lab updated'); }
       else { await labAPI.create(labForm); toast.success('Lab created'); }
       setLabModal(false); load();
-    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.response.data.message || 'Error'); }
   };
 
   const handleTestSubmit = async (e) => {
@@ -51,7 +52,7 @@ export default function Labs() {
       if (editingTest) { await labAPI.updateTest(editingTest.id, testForm); toast.success('Test updated'); }
       else { await labAPI.createTest(testForm); toast.success('Test ordered'); }
       setTestModal(false); load();
-    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.response.data.message || 'Error'); }
   };
 
   const handleResultSubmit = async (e) => {
@@ -66,11 +67,11 @@ export default function Labs() {
   const testCols = [
     { key: 'testNumber', label: 'Test #', render: (v) => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{v}</span> },
     { key: 'testName', label: 'Test Name', render: (v, r) => <div><div style={{ fontWeight: 600 }}>{v}</div><div style={{ fontSize: 12, color: '#64748b' }}>{r.category}</div></div> },
-    { key: 'patient', label: 'Patient', render: (v) => v?.name || '—' },
-    { key: 'lab', label: 'Lab', render: (v) => v?.name || '—' },
+    { key: 'patient', label: 'Patient', render: (v) => v.name || '-' },
+    { key: 'lab', label: 'Lab', render: (v) => v.name || '-' },
     { key: 'price', label: 'Price', render: (v) => `$${parseFloat(v || 0).toFixed(2)}` },
     { key: 'status', label: 'Status', render: (v) => <Badge text={v} type={v} /> },
-    { key: 'isAbnormal', label: 'Result', render: (v, r) => r.status === 'completed' ? <Badge text={v ? 'Abnormal' : 'Normal'} type={v ? 'cancelled' : 'completed'} /> : '—' },
+    { key: 'isAbnormal', label: 'Result', render: (v, r) => r.status === 'completed' ? <Badge text={v ? 'Abnormal' : 'Normal'} type={v ? 'cancelled' : 'completed'} /> : '-' },
     { key: 'id', label: 'Actions', render: (_, r) => (
       <div className={styles.actions}>
         {r.status !== 'completed' && r.status !== 'cancelled' && (
@@ -87,7 +88,7 @@ export default function Labs() {
 
   const labCols = [
     { key: 'name', label: 'Name', render: (v) => <div style={{ fontWeight: 600 }}>{v}</div> },
-    { key: 'hospital', label: 'Hospital', render: (v) => v?.name || '—' },
+    { key: 'hospital', label: 'Hospital', render: (v) => v.name || '-' },
     { key: 'floor', label: 'Floor' },
     { key: 'phone', label: 'Phone' },
     { key: 'operatingHours', label: 'Hours' },
@@ -103,7 +104,7 @@ export default function Labs() {
   return (
     <div>
       <div className={styles.pageHeader}>
-        <div><h2 className={styles.pageTitle}>Labs & Tests</h2><p className={styles.pageSubtitle}>{labs.length} labs · {tests.length} tests</p></div>
+        <div><h2 className={styles.pageTitle}>Labs & Tests</h2><p className={styles.pageSubtitle}>{labs.length} labs  |  {tests.length} tests</p></div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className={styles.btnSecondary} onClick={() => { setEditingLab(null); setLabForm(LAB_INIT); setLabModal(true); }}>+ Add Lab</button>
           <button className={styles.btnPrimary} onClick={() => { setEditingTest(null); setTestForm(TEST_INIT); setTestModal(true); }}>+ Order Test</button>
@@ -113,7 +114,7 @@ export default function Labs() {
       <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
         {['tests', 'labs'].map(t => (
           <button key={t} onClick={() => setTab(t)}
-            style={{ padding: '8px 20px', border: 'none', borderBottom: tab === t ? '3px solid #2563eb' : '3px solid transparent', background: 'none', fontWeight: 600, fontSize: 14, color: tab === t ? '#2563eb' : '#64748b', cursor: 'pointer' }}>
+            style={{ padding: '8px 20px', border: 'none', borderBottom:tab === t ? '3px solid #2563eb' : '3px solid transparent', background: 'none', fontWeight: 600, fontSize: 14, color:tab === t ? '#2563eb' : '#64748b', cursor: 'pointer' }}>
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
@@ -143,10 +144,14 @@ export default function Labs() {
             <div className={styles.field}><label className={styles.label}>Floor</label><input className={styles.input} value={labForm.floor || ''} onChange={(e) => setLabForm({ ...labForm, floor: e.target.value })} /></div>
             <div className={styles.field}><label className={styles.label}>Operating Hours</label><input className={styles.input} value={labForm.operatingHours || ''} onChange={(e) => setLabForm({ ...labForm, operatingHours: e.target.value })} placeholder="e.g. 8AM - 8PM" /></div>
             <div className={styles.field}><label className={styles.label}>Hospital</label>
-              <select className={styles.input} value={labForm.hospitalId || ''} onChange={(e) => setLabForm({ ...labForm, hospitalId: e.target.value })}>
-                <option value="">Select Hospital</option>
-                {hospitals.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
-              </select>
+              <SearchableSelect
+                className={styles.input}
+                value={labForm.hospitalId || ''}
+                onChange={(value) => setLabForm({ ...labForm, hospitalId: value })}
+                options={hospitals.map((h) => ({ value: h.id, label: h.name }))}
+                placeholder="Search hospital..."
+                emptyLabel="Select Hospital"
+              />
             </div>
           </div>
           <div className={styles.formActions}>
@@ -168,16 +173,26 @@ export default function Labs() {
             <div className={styles.field}><label className={styles.label}>Unit</label><input className={styles.input} value={testForm.unit || ''} onChange={(e) => setTestForm({ ...testForm, unit: e.target.value })} /></div>
             <div className={styles.field}><label className={styles.label}>Turnaround Time</label><input className={styles.input} value={testForm.turnaroundTime || ''} onChange={(e) => setTestForm({ ...testForm, turnaroundTime: e.target.value })} placeholder="e.g. 2 hours" /></div>
             <div className={styles.field}><label className={styles.label}>Patient *</label>
-              <select className={styles.input} value={testForm.patientId} onChange={(e) => setTestForm({ ...testForm, patientId: e.target.value })} required>
-                <option value="">Select Patient</option>
-                {patients.map(p => <option key={p.id} value={p.id}>{p.name} ({p.patientId})</option>)}
-              </select>
+              <SearchableSelect
+                className={styles.input}
+                value={testForm.patientId}
+                onChange={(value) => setTestForm({ ...testForm, patientId: value })}
+                options={patients.map((p) => ({ value: p.id, label: `${p.name} (${p.patientId})` }))}
+                placeholder="Search patient..."
+                emptyLabel="Select Patient"
+                required
+              />
             </div>
             <div className={styles.field}><label className={styles.label}>Lab *</label>
-              <select className={styles.input} value={testForm.labId} onChange={(e) => setTestForm({ ...testForm, labId: e.target.value })} required>
-                <option value="">Select Lab</option>
-                {labs.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-              </select>
+              <SearchableSelect
+                className={styles.input}
+                value={testForm.labId}
+                onChange={(value) => setTestForm({ ...testForm, labId: value })}
+                options={labs.map((l) => ({ value: l.id, label: l.name }))}
+                placeholder="Search lab..."
+                emptyLabel="Select Lab"
+                required
+              />
             </div>
           </div>
           <div className={styles.formActions}>
@@ -188,13 +203,13 @@ export default function Labs() {
       </Modal>
 
       {/* Result Modal */}
-      <Modal isOpen={!!resultModal} onClose={() => setResultModal(null)} title={`Results — ${resultModal?.testName}`}>
+      <Modal isOpen={!!resultModal} onClose={() => setResultModal(null)} title={`Results - ${resultModal?.testName || ''}`}>
         <form onSubmit={handleResultSubmit} className={styles.form}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
             {resultModal?.normalRange && <div style={{ background: '#f0fdf4', padding: '10px 14px', borderRadius: 8, fontSize: 13 }}>Normal Range: <strong>{resultModal.normalRange} {resultModal.unit}</strong></div>}
             <div className={styles.field}><label className={styles.label}>Result Value</label><input className={styles.input} value={resultForm.resultValue} onChange={(e) => setResultForm({ ...resultForm, resultValue: e.target.value })} placeholder="e.g. 7.4, 120/80" /></div>
             <div className={styles.field}><label className={styles.label}>Full Result</label><textarea className={styles.input} rows={3} value={resultForm.result} onChange={(e) => setResultForm({ ...resultForm, result: e.target.value })} /></div>
-            <div className={styles.field}><label className={styles.label}>Is Abnormal?</label>
+            <div className={styles.field}><label className={styles.label}>Is Abnormal</label>
               <select className={styles.input} value={resultForm.isAbnormal ? 'true' : 'false'} onChange={(e) => setResultForm({ ...resultForm, isAbnormal: e.target.value === 'true' })}>
                 <option value="false">Normal</option><option value="true">Abnormal</option>
               </select>

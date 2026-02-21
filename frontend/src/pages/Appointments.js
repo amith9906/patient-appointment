@@ -1,19 +1,36 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { appointmentAPI, doctorAPI, patientAPI } from '../services/api';
+import { appointmentAPI, doctorAPI, packageAPI, patientAPI } from '../services/api';
 import Modal from '../components/Modal';
 import Table from '../components/Table';
 import Badge from '../components/Badge';
 import CalendarView from '../components/CalendarView';
+import SearchableSelect from '../components/SearchableSelect';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
 import { startOfWeek, endOfWeek, format } from 'date-fns';
 
-const INIT = { patientId: '', doctorId: '', appointmentDate: '', appointmentTime: '', type: 'consultation', reason: '', notes: '', fee: '' };
-const STATUSES = ['scheduled', 'confirmed', 'in_progress', 'completed', 'cancelled', 'no_show'];
+const INIT = {
+  patientId: '', doctorId: '', appointmentDate: '', appointmentTime: '', type: 'consultation',
+  reason: '', notes: '', fee: '', referralSource: '', referralDetail: '',
+};
+const STATUSES = ['scheduled', 'postponed', 'confirmed', 'in_progress', 'completed', 'cancelled', 'no_show'];
 const LS_SMART   = 'appt_smart_defaults';
 const LS_PREF_DR = 'appt_preferred_doctor';
+const LS_AUTO_PKG_CHECKIN = 'appt_auto_package_checkin';
 const QUICK_INIT = { name: '', phone: '', gender: 'male', dateOfBirth: '', bloodGroup: '' };
+
+const STATUS_LABEL = {
+  scheduled: 'Scheduled',
+  postponed: 'Postponed',
+  confirmed: 'Confirmed',
+  in_progress: 'In Progress',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+  no_show: 'Skipped',
+};
+const QUEUE_STATUSES = ['scheduled', 'postponed', 'confirmed', 'in_progress'];
+const TODAY_STR = new Date().toISOString().split('T')[0];
 
 export default function Appointments() {
   const navigate = useNavigate();
@@ -24,9 +41,13 @@ export default function Appointments() {
   const [loading, setLoading]           = useState(true);
   const [modal, setModal]               = useState(false);
   const [detailModal, setDetailModal]   = useState(null);
+  const [actionModal, setActionModal]   = useState(null);
   const [editing, setEditing]           = useState(null);
   const [form, setForm]                 = useState(INIT);
-  const [filters, setFilters]           = useState({ status: '', date: '' });
+  const [filters, setFilters]           = useState({ status: '', date: '', patientName: '', patientPhone: '' });
+  const [actionNotes, setActionNotes]   = useState('');
+  const [postponeDate, setPostponeDate] = useState('');
+  const [postponeTime, setPostponeTime] = useState('');
 
   // Smart defaults
   const [smartDefaults, setSmartDefaults] = useState(() => localStorage.getItem(LS_SMART) !== 'false');
@@ -41,6 +62,7 @@ export default function Appointments() {
   const [quickCreate, setQuickCreate]   = useState(false);
   const [quickForm, setQuickForm]       = useState(QUICK_INIT);
   const [quickSaving, setQuickSaving]   = useState(false);
+  const [autoPackageOnCheckIn, setAutoPackageOnCheckIn] = useState(() => localStorage.getItem(LS_AUTO_PKG_CHECKIN) !== 'false');
 
   // Calendar
   const [viewMode, setViewMode]                   = useState('list');
@@ -64,6 +86,8 @@ export default function Appointments() {
     const params = {};
     if (filters.status) params.status = filters.status;
     if (filters.date)   params.date   = filters.date;
+    if (filters.patientName.trim())  params.patientName = filters.patientName.trim();
+    if (filters.patientPhone.trim()) params.patientPhone = filters.patientPhone.trim();
     Promise.all([appointmentAPI.getAll(params), doctorAPI.getAll(), patientAPI.getAll()])
       .then(([a, d, p]) => { setAppointments(a.data); setDoctors(d.data); setPatients(p.data); })
       .finally(() => setLoading(false));
@@ -93,7 +117,7 @@ export default function Appointments() {
     appointmentAPI.getAll(params).then(r => setCalendarAppointments(r.data));
   };
 
-  // ── Form helpers ────────────────────────────────────────────────────────────
+  // -- Form helpers ------------------------------------------------------------
   const openCreate = () => {
     setEditing(null);
     setSlots([]);
@@ -120,7 +144,7 @@ export default function Appointments() {
     const updated = { ...form, [k]: v };
     if (k === 'doctorId' && v) {
       const doc = doctors.find(d => d.id === v);
-      if (doc?.consultationFee) updated.fee = String(doc.consultationFee);
+      if (doc.consultationFee) updated.fee = String(doc.consultationFee);
     }
     setForm(updated);
     if (k === 'doctorId' || k === 'appointmentDate') loadSlots(updated.doctorId, updated.appointmentDate);
@@ -141,8 +165,17 @@ export default function Appointments() {
         toast.success('Appointment scheduled');
         if (form.doctorId) localStorage.setItem(LS_PREF_DR, form.doctorId);
       }
+
+      if (form.patientId && (form.referralSource || form.referralDetail)) {
+        try {
+          await patientAPI.update(form.patientId, {
+            referralSource: form.referralSource || null,
+            referralDetail: form.referralDetail || null,
+          });
+        } catch {}
+      }
       setModal(false); load(); refreshCalendar();
-    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.response.data.message || 'Error'); }
   };
 
   const handleStatus = async (id, status) => {
@@ -150,11 +183,96 @@ export default function Appointments() {
     catch { toast.error('Error'); }
   };
 
-  const handleCancel = async (id) => {
-    const reason = window.prompt('Reason for cancellation:');
-    if (reason === null) return;
-    try { await appointmentAPI.cancel(id, reason); toast.success('Appointment cancelled'); load(); }
-    catch { toast.error('Error'); }
+  const handleCheckIn = async (appt) => {
+    try {
+      const res = await appointmentAPI.checkIn(appt.id);
+      const pos = res.data?.queuePosition;
+      toast.success(pos ? `Checked in. Queue token #${pos}` : 'Checked in successfully');
+
+      if (autoPackageOnCheckIn && appt?.patient?.id) {
+        try {
+          const recRes = await packageAPI.getRecommendation({
+            patientId: appt.patient.id,
+            appointmentType: appt.type || '',
+          });
+          const eligible = recRes.data?.recommended || null;
+          if (eligible) {
+            const ok = window.confirm(`Recommended package: ${eligible.plan?.name || 'Package'} (${eligible.usedVisits}/${eligible.totalVisits} used, fit ${eligible.fitScore}/4). Apply one visit now?`);
+            if (ok) {
+              await packageAPI.consumeVisit(eligible.id, {
+                appointmentId: appt.id,
+                notes: 'Applied from check-in workflow',
+              });
+              toast.success('Package visit applied on check-in');
+            }
+          }
+        } catch {}
+      }
+
+      load();
+      refreshCalendar();
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Check-in failed');
+    }
+  };
+
+  const openActionModal = (type, appt) => {
+    setActionNotes('');
+    setActionModal({ type, appt });
+    if (type === 'postpone') {
+      const base = new Date(`${appt.appointmentDate}T00:00:00`);
+      const nextDay = new Date(base);
+      nextDay.setDate(base.getDate() + 1);
+      setPostponeDate(nextDay.toISOString().slice(0, 10));
+      setPostponeTime((appt.appointmentTime || '').slice(0, 5));
+    }
+  };
+
+  const closeActionModal = () => {
+    setActionModal(null);
+    setActionNotes('');
+    setPostponeDate('');
+    setPostponeTime('');
+  };
+
+  const handleActionSubmit = async () => {
+    if (!actionModal?.appt) return;
+    const appt = actionModal.appt;
+    try {
+      if (actionModal.type === 'skip') {
+        await appointmentAPI.update(appt.id, {
+          status: 'no_show',
+          notes: actionNotes.trim() ? `Skipped: ${actionNotes.trim()}` : 'Skipped by staff',
+        });
+        toast.success('Appointment marked as skipped');
+      }
+
+      if (actionModal.type === 'cancel') {
+        if (!actionNotes.trim()) return toast.error('Cancellation reason is required');
+        await appointmentAPI.cancel(appt.id, actionNotes.trim());
+        toast.success('Appointment cancelled');
+      }
+
+      if (actionModal.type === 'postpone') {
+        if (!postponeDate || !postponeTime) return toast.error('Please select postponed date and time');
+        const postponeReason = actionNotes.trim()
+          ? `Postponed: ${actionNotes.trim()}`
+          : `Postponed from ${appt.appointmentDate} ${String(appt.appointmentTime || '').slice(0, 5)}`;
+        await appointmentAPI.update(appt.id, {
+          appointmentDate: postponeDate,
+          appointmentTime: postponeTime,
+          status: 'postponed',
+          notes: postponeReason,
+        });
+        toast.success('Appointment postponed');
+      }
+
+      closeActionModal();
+      load();
+      refreshCalendar();
+    } catch (err) {
+      toast.error(err.response.data.message || 'Error');
+    }
   };
 
   const handlePaymentStatus = async (id, isPaid) => {
@@ -169,7 +287,7 @@ export default function Appointments() {
     }
   };
 
-  // ── Patient typeahead ────────────────────────────────────────────────────────
+  // -- Patient typeahead --------------------------------------------------------
   const selectedPatient = patients.find(p => p.id === form.patientId);
 
   const typeaheadPatients = (() => {
@@ -182,19 +300,40 @@ export default function Appointments() {
   })();
 
   const selectPatient = (p) => {
-    setForm(f => ({ ...f, patientId: p.id }));
+    setForm(f => ({
+      ...f,
+      patientId: p.id,
+      referralSource: p.referralSource || f.referralSource || '',
+      referralDetail: p.referralDetail || f.referralDetail || '',
+    }));
     setPatientQuery('');
     setPatientDropOpen(false);
     setQuickCreate(false);
   };
 
   const clearPatient = () => {
-    setForm(f => ({ ...f, patientId: '' }));
+    setForm(f => ({ ...f, patientId: '', referralSource: '', referralDetail: '' }));
     setPatientQuery('');
     setPatientDropOpen(false);
   };
 
-  // ── Quick-create new patient ─────────────────────────────────────────────────
+  const queueDateForView = filters.date || TODAY_STR;
+  const queueTokenById = useMemo(() => {
+    const map = {};
+    appointments
+      .filter((a) => a.appointmentDate === queueDateForView && QUEUE_STATUSES.includes(a.status))
+      .sort((a, b) => {
+        const ta = String(a.appointmentTime || '');
+        const tb = String(b.appointmentTime || '');
+        if (ta < tb) return -1;
+        if (ta > tb) return 1;
+        return 0;
+      })
+      .forEach((a, idx) => { map[a.id] = idx + 1; });
+    return map;
+  }, [appointments, queueDateForView]);
+
+  // -- Quick-create new patient -------------------------------------------------
   const handleQuickCreate = async () => {
     if (!quickForm.name.trim()) return toast.error('Name is required');
     if (!quickForm.phone.trim()) return toast.error('Phone is required');
@@ -203,7 +342,7 @@ export default function Appointments() {
       const payload = { ...quickForm };
       // For non-super-admin, backend fills hospitalId from scope.
       // For super-admin, pick from first doctor's hospital if available.
-      if (!payload.hospitalId) payload.hospitalId = doctors[0]?.hospitalId || '';
+      if (!payload.hospitalId) payload.hospitalId = doctors?.[0]?.hospitalId || '';
       const res = await patientAPI.create(payload);
       const newPat = res.data;
       setPatients(prev => [newPat, ...prev]);
@@ -211,24 +350,47 @@ export default function Appointments() {
       toast.success(`Patient "${newPat.name}" created and selected`);
       setQuickForm(QUICK_INIT);
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to create patient');
+      toast.error(err.response.data.message || 'Failed to create patient');
     } finally { setQuickSaving(false); }
   };
 
-  // ── Table columns ────────────────────────────────────────────────────────────
+  // -- Table columns ------------------------------------------------------------
   const columns = [
     { key: 'appointmentNumber', label: 'Apt #', render: (v) => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{v}</span> },
     { key: 'appointmentDate',   label: 'Date' },
-    { key: 'appointmentTime',   label: 'Time', render: (v) => v?.slice(0, 5) },
-    { key: 'patient', label: 'Patient', render: (v) => <div><div style={{ fontWeight: 600 }}>{v?.name}</div><div style={{ fontSize: 12, color: '#64748b' }}>{v?.patientId}</div></div> },
-    { key: 'doctor',  label: 'Doctor',  render: (v) => v ? `Dr. ${v.name}` : '—' },
+    { key: 'appointmentTime',   label: 'Time', render: (v) => v.slice(0, 5) },
+    {
+      key: 'queueToken',
+      label: 'Queue',
+      render: (_, r) => (
+        queueTokenById[r.id]
+          ? <span style={{ fontWeight: 700, color: '#0f766e' }}>#{queueTokenById[r.id]}</span>
+          : '-'
+      ),
+    },
+    {
+      key: 'patient',
+      label: 'Patient',
+      render: (v) => (
+        <div>
+          <div style={{ fontWeight: 600 }}>{v.name}</div>
+          <div style={{ fontSize: 12, color: '#64748b' }}>
+            {v.patientId}{v.phone ? ` | ${v.phone}` : ''}
+          </div>
+        </div>
+      ),
+    },
+    { key: 'doctor',  label: 'Doctor',  render: (v) => v ? `Dr. ${v.name}` : '-'},
     { key: 'type',    label: 'Type',    render: (v) => <Badge text={v} type="default" /> },
-    { key: 'status',  label: 'Status',  render: (v) => <Badge text={v} type={v} /> },
+    { key: 'status',  label: 'Status',  render: (v) => <Badge text={STATUS_LABEL[v] || v} type={v} /> },
     { key: 'isPaid',  label: 'Payment', render: (v) => <Badge text={v ? 'Paid' : 'Unpaid'} type={v ? 'active' : 'inactive'} /> },
     { key: 'id', label: 'Actions', render: (_, r) => (
       <div className={styles.actions}>
         <button className={styles.btnEdit} onClick={() => navigate(`/appointments/${r.id}`)}>View / Edit</button>
-        {r.status === 'scheduled'  && <button className={styles.btnSuccess} onClick={() => handleStatus(r.id, 'confirmed')}>Confirm</button>}
+        {['scheduled', 'postponed'].includes(r.status) && (
+          <button className={styles.btnPrimary} onClick={() => handleCheckIn(r)}>Check-In</button>
+        )}
+        {['scheduled', 'postponed'].includes(r.status) && <button className={styles.btnSuccess} onClick={() => handleStatus(r.id, 'confirmed')}>Confirm</button>}
         {r.status === 'confirmed'  && <button className={styles.btnWarning} onClick={() => handleStatus(r.id, 'in_progress')}>Start</button>}
         {r.status === 'in_progress'&& <button className={styles.btnSuccess} onClick={() => handleStatus(r.id, 'completed')}>Complete</button>}
         {(Number(r.fee || 0) + Number(r.treatmentBill || 0)) > 0 && (
@@ -239,7 +401,15 @@ export default function Appointments() {
             {r.isPaid ? 'Mark Unpaid' : 'Mark Paid'}
           </button>
         )}
-        {!['cancelled','completed','no_show'].includes(r.status) && <button className={styles.btnDelete} onClick={() => handleCancel(r.id)}>Cancel</button>}
+        {!['cancelled','completed','no_show'].includes(r.status) && (
+          <button className={styles.btnWarning} onClick={() => openActionModal('postpone', r)}>Postpone</button>
+        )}
+        {!['cancelled','completed','no_show'].includes(r.status) && (
+          <button className={styles.btnSecondary} onClick={() => openActionModal('skip', r)}>Skipped</button>
+        )}
+        {!['cancelled','completed','no_show'].includes(r.status) && (
+          <button className={styles.btnDelete} onClick={() => openActionModal('cancel', r)}>Cancel</button>
+        )}
       </div>
     )},
   ];
@@ -254,43 +424,79 @@ export default function Appointments() {
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
-            {[['list','☰ List'],['calendar','📅 Calendar']].map(([v, label]) => (
+            {[['list','List'],['calendar','Calendar']].map(([v, label]) => (
               <button key={v} onClick={() => setViewMode(v)}
                 style={{ padding: '6px 14px', fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer',
-                  background: viewMode === v ? '#2563eb' : '#fff', color: viewMode === v ? '#fff' : '#64748b', transition: 'background 0.15s' }}>
+                  background:viewMode === v ? '#2563eb' : '#fff', color:viewMode === v ? '#fff' : '#64748b', transition: 'background 0.15s' }}>
                 {label}
               </button>
             ))}
           </div>
           <button className={styles.btnPrimary} onClick={openCreate}>+ Schedule Appointment</button>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#64748b' }}>
+            <input
+              type="checkbox"
+              checked={autoPackageOnCheckIn}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setAutoPackageOnCheckIn(v);
+                localStorage.setItem(LS_AUTO_PKG_CHECKIN, v ? 'true' : 'false');
+              }}
+            />
+            Suggest package use on check-in
+          </label>
         </div>
       </div>
 
-      {/* ── LIST VIEW ── */}
+      {/* -- LIST VIEW -- */}
       {viewMode === 'list' && (
         <>
           <div className={styles.filterBar}>
             <input type="date" className={styles.filterSelect} value={filters.date} onChange={e => setFilters({ ...filters, date: e.target.value })} />
+            <input
+              className={styles.searchInput}
+              placeholder="Filter by patient name"
+              value={filters.patientName}
+              onChange={e => setFilters({ ...filters, patientName: e.target.value })}
+              style={{ minWidth: 220 }}
+            />
+            <input
+              className={styles.searchInput}
+              placeholder="Filter by mobile number"
+              value={filters.patientPhone}
+              onChange={e => setFilters({ ...filters, patientPhone: e.target.value })}
+              style={{ minWidth: 220 }}
+            />
             <select className={styles.filterSelect} value={filters.status} onChange={e => setFilters({ ...filters, status: e.target.value })}>
               <option value="">All Statuses</option>
-              {STATUSES.map(s => <option key={s} value={s}>{s.replace('_',' ')}</option>)}
+              {STATUSES.map(s => <option key={s} value={s}>{STATUS_LABEL[s] || s}</option>)}
             </select>
-            <button className={styles.btnSecondary} onClick={() => setFilters({ status: '', date: '' })}>Clear</button>
+            <button
+              className={styles.btnSecondary}
+              onClick={() => setFilters({ ...filters, date: TODAY_STR, status: '' })}
+            >
+              Today Queue
+            </button>
+            <button className={styles.btnSecondary} onClick={() => setFilters({ status: '', date: '', patientName: '', patientPhone: '' })}>Clear</button>
           </div>
           <div className={styles.card}><Table columns={columns} data={appointments} loading={loading} /></div>
         </>
       )}
 
-      {/* ── CALENDAR VIEW ── */}
+      {/* -- CALENDAR VIEW -- */}
       {viewMode === 'calendar' && (
         <div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
             <label style={{ fontSize: 13, color: '#64748b', fontWeight: 500, whiteSpace: 'nowrap' }}>Filter by Doctor:</label>
-            <select value={calendarDoctorFilter} onChange={e => setCalendarDoctorFilter(e.target.value)}
-              className={styles.filterSelect} style={{ minWidth: 200 }}>
-              <option value="">All Doctors</option>
-              {doctors.map(d => <option key={d.id} value={d.id}>Dr. {d.name} — {d.specialization}</option>)}
-            </select>
+            <SearchableSelect
+              className={styles.filterSelect}
+              style={{ minWidth: 200 }}
+              value={calendarDoctorFilter}
+              onChange={setCalendarDoctorFilter}
+              options={doctors.map((d) => ({ value: d.id, label: `Dr. ${d.name} - ${d.specialization}` }))}
+              placeholder="Search doctor..."
+              emptyLabel="All Doctors"
+            />
           </div>
           <CalendarView appointments={calendarAppointments} view={calendarView} currentDate={calendarDate}
             onNavigate={setCalendarDate} onViewChange={setCalendarView} onAppointmentClick={a => navigate(`/appointments/${a.id}`)}
@@ -298,7 +504,7 @@ export default function Appointments() {
         </div>
       )}
 
-      {/* ── Schedule Appointment Modal ── */}
+      {/* -- Schedule Appointment Modal -- */}
       <Modal isOpen={modal} onClose={() => setModal(false)} title="Schedule Appointment" size="lg">
         <form onSubmit={handleSubmit} className={styles.form}>
 
@@ -309,17 +515,17 @@ export default function Appointments() {
               title={smartDefaults ? 'Auto-selects doctor & fills fee' : 'Smart defaults off'}
               style={{ position: 'relative', display: 'inline-flex', alignItems: 'center',
                 width: 36, height: 20, borderRadius: 10, border: 'none', cursor: 'pointer',
-                background: smartDefaults ? '#2563eb' : '#d1d5db', transition: 'background 0.2s', padding: 0 }}>
+                background:smartDefaults ? '#2563eb' : '#d1d5db', transition: 'background 0.2s', padding: 0 }}>
               <span style={{ display: 'block', width: 16, height: 16, borderRadius: '50%', background: '#fff',
                 transition: 'transform 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
-                transform: smartDefaults ? 'translateX(18px)' : 'translateX(2px)' }} />
+                transform:smartDefaults ? 'translateX(18px)' : 'translateX(2px)' }} />
             </button>
-            <span style={{ fontSize: 11, color: smartDefaults ? '#2563eb' : '#94a3b8', fontWeight: 500, minWidth: 20 }}>
+            <span style={{ fontSize: 11, color:smartDefaults ? '#2563eb' : '#94a3b8', fontWeight: 500, minWidth: 20 }}>
               {smartDefaults ? 'On' : 'Off'}
             </span>
           </div>
 
-          {/* ── Patient Combobox ── */}
+          {/* -- Patient Combobox -- */}
           <div className={styles.field} style={{ marginBottom: 14, position: 'relative' }} ref={comboRef}>
             <label className={styles.label}>Patient *</label>
 
@@ -331,20 +537,20 @@ export default function Appointments() {
                   <div style={{ fontWeight: 600, fontSize: 14, color: '#1e40af' }}>{selectedPatient.name}</div>
                   <div style={{ fontSize: 12, color: '#3b82f6' }}>
                     {selectedPatient.patientId}
-                    {selectedPatient.phone && ` · ${selectedPatient.phone}`}
-                    {selectedPatient.bloodGroup && ` · ${selectedPatient.bloodGroup}`}
+                    {selectedPatient.phone && ` | ${selectedPatient.phone}`}
+                    {selectedPatient.bloodGroup && ` | ${selectedPatient.bloodGroup}`}
                   </div>
                 </div>
                 <button type="button" onClick={clearPatient}
                   style={{ background: 'none', border: 'none', color: '#93c5fd', cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: '0 2px' }}
-                  title="Change patient">×</button>
+                  title="Change patient">X</button>
               </div>
             ) : (
               <input
                 className={styles.input}
                 value={patientQuery}
                 autoComplete="off"
-                placeholder="Type name, ID or phone to search…"
+                placeholder="Type name, ID or phone to search..."
                 onChange={e => { setPatientQuery(e.target.value); setPatientDropOpen(true); setForm(f => ({ ...f, patientId: '' })); }}
                 onFocus={() => setPatientDropOpen(true)}
               />
@@ -370,15 +576,15 @@ export default function Appointments() {
                       <div style={{ fontWeight: 600, fontSize: 13, color: '#1e293b' }}>{p.name}</div>
                       <div style={{ fontSize: 11, color: '#64748b', marginTop: 1 }}>
                         {p.patientId}
-                        {p.phone && ` · ${p.phone}`}
-                        {p.gender && ` · ${p.gender}`}
-                        {p.bloodGroup && ` · ${p.bloodGroup}`}
+                        {p.phone && ` | ${p.phone}`}
+                        {p.gender && ` | ${p.gender}`}
+                        {p.bloodGroup && ` | ${p.bloodGroup}`}
                       </div>
                     </button>
                   ))
                 )}
 
-                {/* ── New Patient option ── */}
+                {/* -- New Patient option -- */}
                 <button type="button"
                   onClick={() => { setPatientDropOpen(false); setQuickCreate(true); setQuickForm(f => ({ ...f, name: patientQuery })); }}
                   style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
@@ -393,13 +599,13 @@ export default function Appointments() {
             )}
           </div>
 
-          {/* ── Quick-create new patient form ── */}
+          {/* -- Quick-create new patient form -- */}
           {quickCreate && (
             <div style={{ border: '1px solid #bfdbfe', borderRadius: 10, padding: 14, background: '#eff6ff', marginBottom: 14 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                 <span style={{ fontWeight: 700, fontSize: 13, color: '#1e40af' }}>+ New Patient</span>
                 <button type="button" onClick={() => setQuickCreate(false)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#93c5fd', fontSize: 18, lineHeight: 1 }}>×</button>
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#93c5fd', fontSize: 18, lineHeight: 1 }}>X</button>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                 {[
@@ -431,7 +637,7 @@ export default function Appointments() {
                   </label>
                   <select className={styles.input} value={quickForm.bloodGroup}
                     onChange={e => setQuickForm(f => ({ ...f, bloodGroup: e.target.value }))}>
-                    <option value="">— optional —</option>
+                    <option value="">- optional -</option>
                     {['A+','A-','B+','B-','AB+','AB-','O+','O-'].map(b => <option key={b} value={b}>{b}</option>)}
                   </select>
                 </div>
@@ -439,13 +645,13 @@ export default function Appointments() {
               <div style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
                 <button type="button" className={styles.btnSecondary} onClick={() => setQuickCreate(false)}>Cancel</button>
                 <button type="button" className={styles.btnPrimary} onClick={handleQuickCreate} disabled={quickSaving}>
-                  {quickSaving ? 'Creating…' : 'Create & Select'}
+                  {quickSaving ? 'Creating...' : 'Create & Select'}
                 </button>
               </div>
             </div>
           )}
 
-          {/* ── Rest of the form ── */}
+          {/* -- Rest of the form -- */}
           <div className={styles.grid2}>
             {/* Doctor */}
             <div className={styles.field}>
@@ -455,19 +661,24 @@ export default function Appointments() {
                   <button type="button"
                     onClick={() => { localStorage.setItem(LS_PREF_DR, form.doctorId); toast.info('Default doctor saved'); }}
                     style={{ fontSize: 11, background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-                      color: localStorage.getItem(LS_PREF_DR) === form.doctorId ? '#2563eb' : '#94a3b8' }}
+                      color: localStorage.getItem(LS_PREF_DR) === form.doctorId ? '#2563eb' : '#94a3b8'}}
                     title="Pin as default doctor">
-                    {localStorage.getItem(LS_PREF_DR) === form.doctorId ? '★ Default' : '☆ Set default'}
+                    {localStorage.getItem(LS_PREF_DR) === form.doctorId ? '* Default' : 'o Set default'}
                   </button>
                 )}
               </div>
-              <select className={styles.input} value={form.doctorId} onChange={e => set('doctorId', e.target.value)} required>
-                <option value="">Select Doctor</option>
-                {doctors.map(d => {
+              <SearchableSelect
+                className={styles.input}
+                value={form.doctorId}
+                onChange={(value) => set('doctorId', value)}
+                options={doctors.map((d) => {
                   const isDefault = localStorage.getItem(LS_PREF_DR) === d.id;
-                  return <option key={d.id} value={d.id}>{isDefault ? '★ ' : ''}Dr. {d.name} — {d.specialization}</option>;
+                  return { value: d.id, label: `${isDefault ? '* ' : ''}Dr. ${d.name} - ${d.specialization}` };
                 })}
-              </select>
+                placeholder="Search doctor..."
+                emptyLabel="Select Doctor"
+                required
+              />
             </div>
 
             {/* Date */}
@@ -478,7 +689,7 @@ export default function Appointments() {
                 min={new Date().toISOString().split('T')[0]} />
             </div>
 
-            {/* Time — slot grid or plain input */}
+            {/* Time - slot grid or plain input */}
             <div className={styles.field}>
               <label className={styles.label}>
                 Time *
@@ -495,8 +706,8 @@ export default function Appointments() {
                       onClick={() => s.available && set('appointmentTime', s.time)}
                       style={{
                         padding: '7px 4px', borderRadius: 7, fontSize: 12, fontWeight: 500, border: '1px solid',
-                        cursor: s.available ? 'pointer' : 'not-allowed', transition: 'all 0.12s',
-                        textDecoration: !s.available ? 'line-through' : 'none',
+                        cursor:s.available ? 'pointer' : 'not-allowed', transition: 'all 0.12s',
+                        textDecoration:!s.available ? 'line-through' : 'none',
                         background:   form.appointmentTime === s.time ? '#2563eb' : !s.available ? '#f1f5f9' : '#fff',
                         borderColor:  form.appointmentTime === s.time ? '#2563eb' : !s.available ? '#e2e8f0' : '#cbd5e1',
                         color:        form.appointmentTime === s.time ? '#fff'    : !s.available ? '#94a3b8' : '#374151',
@@ -522,13 +733,26 @@ export default function Appointments() {
 
             {/* Fee */}
             <div className={styles.field}>
-              <label className={styles.label}>Fee (₹)</label>
+              <label className={styles.label}>Fee (Rs)</label>
               <input type="number" step="0.01" className={styles.input} value={form.fee} onChange={e => set('fee', e.target.value)} />
             </div>
 
             <div className={styles.field} style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Reason for Visit</label>
               <textarea className={styles.input} rows={2} value={form.reason} onChange={e => set('reason', e.target.value)} />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label}>Referral Source</label>
+              <select className={styles.input} value={form.referralSource || ''} onChange={e => set('referralSource', e.target.value)}>
+                <option value="">Select</option>
+                {['Walk-in', 'Google', 'Website', 'Doctor Referral', 'Friend/Family', 'Insurance', 'Corporate', 'Camp', 'Social Media', 'Other'].map((src) => (
+                  <option key={src} value={src}>{src}</option>
+                ))}
+              </select>
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label}>Referral Detail</label>
+              <input className={styles.input} value={form.referralDetail || ''} onChange={e => set('referralDetail', e.target.value)} placeholder="Doctor name / campaign / notes" />
             </div>
             <div className={styles.field} style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Notes</label>
@@ -546,10 +770,11 @@ export default function Appointments() {
                   ['Phone', selectedPatient.phone], ['Email', selectedPatient.email],
                   ['Gender', selectedPatient.gender], ['DOB', selectedPatient.dateOfBirth],
                   ['Blood Group', selectedPatient.bloodGroup],
+                  ['Referral', selectedPatient.referralSource],
                 ].map(([label, value]) => (
                   <div key={label} className={styles.infoItem}>
                     <div className={styles.infoLabel}>{label}</div>
-                    <div className={styles.infoValue}>{value || '—'}</div>
+                    <div className={styles.infoValue}>{value || '-'}</div>
                   </div>
                 ))}
               </div>
@@ -557,6 +782,30 @@ export default function Appointments() {
                 <div style={{ marginTop: 8, fontSize: 13, color: '#475569' }}>
                   {selectedPatient.allergies     && <div><strong>Allergies:</strong> {selectedPatient.allergies}</div>}
                   {selectedPatient.medicalHistory && <div><strong>Medical History:</strong> {selectedPatient.medicalHistory}</div>}
+                </div>
+              )}
+              {Array.isArray(selectedPatient.chronicConditions) && selectedPatient.chronicConditions.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>Chronic Conditions</div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {selectedPatient.chronicConditions.map((c) => (
+                      <span key={c} style={{ background: '#dbeafe', color: '#1d4ed8', borderRadius: 999, fontSize: 11, fontWeight: 700, padding: '2px 8px' }}>
+                        {c}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {Array.isArray(selectedPatient.clinicalAlerts) && selectedPatient.clinicalAlerts.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>Clinical Alerts</div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {selectedPatient.clinicalAlerts.map((a) => (
+                      <span key={a} style={{ background: '#fee2e2', color: '#b91c1c', borderRadius: 999, fontSize: 11, fontWeight: 700, padding: '2px 8px' }}>
+                        {a}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -569,29 +818,29 @@ export default function Appointments() {
         </form>
       </Modal>
 
-      {/* ── Detail Modal ── */}
+      {/* -- Detail Modal -- */}
       <Modal isOpen={!!detailModal} onClose={() => setDetailModal(null)} title="Appointment Details">
         {detailModal && (
           <div>
             <div className={styles.infoGrid}>
               {[
                 ['Appointment #', detailModal.appointmentNumber], ['Date', detailModal.appointmentDate],
-                ['Time', detailModal.appointmentTime?.slice(0,5)], ['Patient', detailModal.patient?.name],
-                ['Patient ID', detailModal.patient?.patientId],
-                ['Doctor', detailModal.doctor ? `Dr. ${detailModal.doctor.name}` : '—'],
-                ['Specialization', detailModal.doctor?.specialization],
-                ['Type', detailModal.type], ['Fee', detailModal.fee ? `₹${detailModal.fee}` : '—'],
+                ['Time', detailModal.appointmentTime.slice(0,5)], ['Patient', detailModal.patient.name],
+                ['Patient ID', detailModal.patient.patientId],
+                ['Doctor', detailModal.doctor ? `Dr. ${detailModal.doctor.name}` : '-'],
+                ['Specialization', detailModal.doctor.specialization],
+                ['Type', detailModal.type], ['Fee', detailModal.fee ? `Rs ${detailModal.fee}` : '-'],
                 ['Payment', detailModal.isPaid ? 'Paid' : 'Unpaid'],
               ].map(([label, value]) => (
                 <div key={label} className={styles.infoItem}>
                   <div className={styles.infoLabel}>{label}</div>
-                  <div className={styles.infoValue}>{value || '—'}</div>
+                  <div className={styles.infoValue}>{value || '-'}</div>
                 </div>
               ))}
             </div>
             <div style={{ marginTop: 16 }}>
               <div className={styles.infoLabel}>Status</div>
-              <div style={{ marginTop: 6 }}><Badge text={detailModal.status} type={detailModal.status} /></div>
+              <div style={{ marginTop: 6 }}><Badge text={STATUS_LABEL[detailModal.status] || detailModal.status} type={detailModal.status} /></div>
             </div>
             {detailModal.reason && (
               <div style={{ marginTop: 16 }}>
@@ -605,6 +854,99 @@ export default function Appointments() {
                 <div style={{ background: '#f0fdf4', padding: '10px 14px', borderRadius: 8, marginTop: 6 }}>{detailModal.diagnosis}</div>
               </div>
             )}
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={!!actionModal}
+        onClose={closeActionModal}
+        title={
+          actionModal?.type === 'skip'
+            ? 'Mark Appointment as Skipped'
+            : actionModal?.type === 'postpone'
+              ? 'Postpone Appointment'
+              : 'Cancel Appointment'
+        }
+        size="md"
+      >
+        {actionModal?.appt && (
+          <div className={styles.form}>
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>
+                {actionModal.appt.patient.name} ({actionModal.appt.patient.phone || 'No mobile'})
+              </div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 3 }}>
+                {actionModal.appt.appointmentDate} {String(actionModal.appt.appointmentTime || '').slice(0, 5)} | Dr. {actionModal.appt.doctor.name || '-'}
+              </div>
+            </div>
+
+            {actionModal.type === 'postpone' && (
+              <div className={styles.grid2} style={{ marginBottom: 12 }}>
+                <div className={styles.field}>
+                  <label className={styles.label}>New Date *</label>
+                  <input
+                    type="date"
+                    className={styles.input}
+                    value={postponeDate}
+                    onChange={(e) => setPostponeDate(e.target.value)}
+                    min={new Date().toISOString().slice(0, 10)}
+                  />
+                </div>
+                <div className={styles.field}>
+                  <label className={styles.label}>New Time *</label>
+                  <input
+                    type="time"
+                    className={styles.input}
+                    value={postponeTime}
+                    onChange={(e) => setPostponeTime(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className={styles.field}>
+              <label className={styles.label}>
+                {actionModal.type === 'cancel' ? 'Cancellation Reason *' : 'Details / Reason'}
+              </label>
+              <textarea
+                className={styles.input}
+                rows={3}
+                value={actionNotes}
+                onChange={(e) => setActionNotes(e.target.value)}
+                placeholder={
+                  actionModal.type === 'skip'
+                    ? 'Why was this appointment skipped'
+                    : actionModal.type === 'postpone'
+                      ? 'Reason for postponing to next/selected date'
+                      : 'Reason for cancellation'
+                }
+              />
+            </div>
+
+            <div className={styles.formActions}>
+              <button type="button" className={styles.btnSecondary} onClick={closeActionModal}>Close</button>
+              {actionModal.type === 'postpone' && (
+                <button
+                  type="button"
+                  className={styles.btnWarning}
+                  onClick={() => {
+                    const d = new Date(`${actionModal.appt.appointmentDate}T00:00:00`);
+                    d.setDate(d.getDate() + 1);
+                    setPostponeDate(d.toISOString().slice(0, 10));
+                  }}
+                >
+                  Next Day
+                </button>
+              )}
+              <button
+                type="button"
+                className={actionModal.type === 'cancel' ? styles.btnDelete : styles.btnPrimary}
+                onClick={handleActionSubmit}
+              >
+                {actionModal.type === 'skip' ? 'Mark Skipped' : actionModal.type === 'postpone' ? 'Postpone' : 'Cancel Appointment'}
+              </button>
+            </div>
           </div>
         )}
       </Modal>

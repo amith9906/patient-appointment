@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
 
-const TYPE_ICONS = { lab_report: '🧪', radiology: '🔬', discharge_summary: '📄', prescription: '💊', medical_certificate: '📜', other: '📋' };
+const TYPE_ICONS = { lab_report: '🧪', radiology: '🔬', discharge_summary: 'Doc', prescription: 'Rx', medical_certificate: '📜', other: 'Report' };
 
 export default function MyReports() {
   const [reports, setReports] = useState([]);
@@ -23,7 +23,7 @@ export default function MyReports() {
     } catch { toast.error('Download failed'); }
   };
 
-  const filtered = filter ? reports.filter(r => r.type === filter) : reports;
+const filtered = filter ? reports.filter(r => r.type === filter) : reports;
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -46,19 +46,19 @@ export default function MyReports() {
         <div className="flex justify-center p-16"><div className="w-8 h-8 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" /></div>
       ) : filtered.length === 0 ? (
         <div className="bg-white rounded-xl p-16 text-center border border-gray-100">
-          <div className="text-5xl mb-3">📋</div>
+          <div className="text-5xl mb-3">Report</div>
           <p className="text-gray-500">No reports found</p>
         </div>
       ) : (
         <div className="grid gap-4">
           {filtered.map(r => (
             <div key={r.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex items-center gap-4">
-              <div className="text-4xl">{TYPE_ICONS[r.type] || '📋'}</div>
+              <div className="text-4xl">{TYPE_ICONS[r.type] || 'Report'}</div>
               <div className="flex-1">
                 <div className="font-semibold text-gray-800">{r.title}</div>
-                <div className="text-sm text-gray-500 mt-0.5">{r.type?.replace(/_/g,' ')} · {new Date(r.createdAt).toLocaleDateString()}</div>
+                <div className="text-sm text-gray-500 mt-0.5">{r.type.replace(/_/g,' ')}  |  {new Date(r.createdAt).toLocaleDateString()}</div>
                 {r.description && <div className="text-xs text-gray-400 mt-1">{r.description}</div>}
-                <div className="text-xs text-gray-400 mt-1">{r.mimeType?.split('/')[1]?.toUpperCase()} · {r.fileSize ? `${(r.fileSize/1024).toFixed(1)} KB` : ''}</div>
+                <div className="text-xs text-gray-400 mt-1">{r.mimeType.split('/')[1].toUpperCase()} | {r.fileSize ? `${(r.fileSize / 1024).toFixed(1)} KB` : ''}</div>
               </div>
               <button onClick={() => handleDownload(r)}
                 className="bg-blue-50 text-blue-600 hover:bg-blue-100 px-4 py-2 rounded-lg text-sm font-medium transition-colors">

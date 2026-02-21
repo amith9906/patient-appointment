@@ -10,6 +10,8 @@ const Prescription = sequelize.define('Prescription', {
   whenToUse: { type: DataTypes.STRING, comment: 'e.g. morning and night, as needed for pain' },
   duration: { type: DataTypes.STRING, comment: 'e.g. 7 days, 2 weeks' },
   instructions: { type: DataTypes.TEXT },
+  instructionsOriginal: { type: DataTypes.TEXT, comment: 'Doctor-entered original note language' },
+  translatedInstructions: { type: DataTypes.JSONB, allowNull: true, comment: 'Map of languageCode => translated note' },
   quantity: { type: DataTypes.INTEGER, defaultValue: 1 },
 });
 

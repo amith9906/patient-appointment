@@ -1,13 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { medicationAPI, hospitalAPI, bulkAPI } from '../services/api';
 import Modal from '../components/Modal';
-import Table from '../components/Table';
 import Badge from '../components/Badge';
+import SearchableSelect from '../components/SearchableSelect';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
 
-const CATEGORIES = ['tablet', 'capsule', 'syrup', 'injection', 'cream', 'drops', 'inhaler', 'patch', 'suppository', 'other'];
-const INIT = { name: '', genericName: '', composition: '', category: 'tablet', dosage: '', manufacturer: '', description: '', sideEffects: '', contraindications: '', stockQuantity: 0, unitPrice: 0, expiryDate: '', requiresPrescription: true, hospitalId: '' };
+const CATEGORIES = ['tablet', 'capsule', 'syrup', 'injection', 'cream', 'drops', 'inhaler', 'patch', 'suppository', 'vaccine', 'other'];
+
+const INIT = {
+  name: '', genericName: '', composition: '', category: 'tablet', dosage: '',
+  manufacturer: '', description: '', sideEffects: '', contraindications: '',
+  stockQuantity: 0, unitPrice: 0, purchasePrice: '', gstRate: 0,
+  hsnCode: '', barcode: '', supplierName: '',
+  expiryDate: '', batchNo: '', mfgDate: '', requiresPrescription: true, hospitalId: '',
+};
 
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -16,7 +23,65 @@ function downloadBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function getMedDaysRemaining(expiryDate) {
+  if (!expiryDate) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const exp = new Date(expiryDate + 'T00:00:00');
+  return Math.floor((exp - today) / (1000 * 60 * 60 * 24));
+}
+
+function getRowBg(days) {
+  if (days === null) return undefined;
+  if (days < 0) return '#fef2f2';      // expired - light red
+  if (days < 30) return '#fff7ed';     // expiring soon - light orange
+  if (days < 60) return '#fefce8';     // caution - light yellow
+  return undefined;
+}
+
+function ExpiryBadge({ expiryDate }) {
+  if (!expiryDate) return <span style={{ color: '#94a3b8', fontSize: 12 }}>-</span>;
+  const days = getMedDaysRemaining(expiryDate);
+  let color, label, bg;
+  if (days < 0) { color = '#b91c1c'; bg = '#fee2e2'; label = `EXPIRED (${Math.abs(days)}d ago)`; }
+  else if (days === 0) { color = '#b91c1c'; bg = '#fee2e2'; label = 'Expires TODAY'; }
+  else if (days < 7) { color = '#b91c1c'; bg = '#fee2e2'; label = `${days}d - CRITICAL`; }
+  else if (days < 30) { color = '#92400e'; bg = '#fef3c7'; label = `${days}d - Warning`; }
+  else if (days < 60) { color = '#854d0e'; bg = '#fef9c3'; label = `${days}d`; }
+  else { color = '#15803d'; bg = undefined; label = expiryDate; }
+
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: '#64748b' }}>{expiryDate}</div>
+      {bg ? (
+        <span style={{ background: bg, color, padding: '1px 7px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
+          {label}
+        </span>
+      ) : (
+        <span style={{ color, fontSize: 11 }}>{days >= 60 ? `${days}d left` : label}</span>
+      )}
+    </div>
+  );
+}
+
+function daysRemainingColor(days) {
+  if (days === null) return '#64748b';
+  if (days < 0) return '#dc2626';
+  if (days < 7) return '#dc2626';
+  if (days < 30) return '#d97706';
+  if (days < 60) return '#ca8a04';
+  return '#16a34a';
+}
+
+function daysRemainingLabel(days) {
+  if (days === null) return '-';
+  if (days < 0) return `EXPIRED (${Math.abs(days)}d ago)`;
+  if (days === 0) return 'Expires TODAY';
+  return `${days}d remaining`;
+}
+
 export default function Medications() {
+  const [tab, setTab] = useState('list');
   const [meds, setMeds] = useState([]);
   const [hospitals, setHospitals] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -28,6 +93,14 @@ export default function Medications() {
   const [stockForm, setStockForm] = useState({ quantity: 0, operation: 'add' });
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState('');
+  const [stockFilter, setStockFilter] = useState('');  // 'low' | 'expired' | 'expiring'
+
+  // Expiry alert state
+  const [expiryData, setExpiryData] = useState([]);
+  const [expiryLoading, setExpiryLoading] = useState(false);
+  const [expiryDays, setExpiryDays] = useState(30);
+  const [expiryCat, setExpiryCat] = useState('');
+  const [expiryHospital, setExpiryHospital] = useState('');
 
   // Bulk upload state
   const [bulkHospitalId, setBulkHospitalId] = useState('');
@@ -46,16 +119,52 @@ export default function Medications() {
   };
   useEffect(load, [catFilter]);
 
+  const loadExpiry = () => {
+    setExpiryLoading(true);
+    const params = { days: expiryDays };
+    if (expiryCat) params.category = expiryCat;
+    if (expiryHospital) params.hospitalId = expiryHospital;
+    medicationAPI.getExpiryAlerts(params)
+      .then((r) => setExpiryData(r.data || []))
+      .catch(() => setExpiryData([]))
+      .finally(() => setExpiryLoading(false));
+  };
+
+  useEffect(() => {
+    if (tab === 'expiry') loadExpiry();
+  }, [tab]);
+
   const openCreate = () => { setEditing(null); setForm(INIT); setModal(true); };
-  const openEdit = (m) => { setEditing(m); setForm({ ...m }); setModal(true); };
+  const openEdit = (m) => {
+    setEditing(m);
+    setForm({
+      ...m,
+      gstRate: Number(m.gstRate || 0),
+      purchasePrice: m.purchasePrice || '',
+      hsnCode: m.hsnCode || '',
+      barcode: m.barcode || '',
+      supplierName: m.supplierName || '',
+      batchNo: '',
+      mfgDate: '',
+    });
+    setModal(true);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      if (editing) { await medicationAPI.update(editing.id, form); toast.success('Medication updated'); }
-      else { await medicationAPI.create(form); toast.success('Medication created'); }
+      const payload = { ...form };
+      if (editing) {
+        delete payload.batchNo;
+        delete payload.mfgDate;
+        await medicationAPI.update(editing.id, payload);
+        toast.success('Medication updated');
+      } else {
+        await medicationAPI.create(payload);
+        toast.success('Medication created');
+      }
       setModal(false); load();
-    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.response.data.message || 'Error'); }
   };
 
   const handleStock = async (e) => {
@@ -64,7 +173,7 @@ export default function Medications() {
       await medicationAPI.updateStock(stockModal.id, stockForm);
       toast.success('Stock updated');
       setStockModal(null); load();
-    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.response.data.message || 'Error'); }
   };
 
   const handleDownloadTemplate = async () => {
@@ -87,59 +196,357 @@ export default function Medications() {
       setBulkResult(res.data);
       if (res.data.created > 0) load();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Upload failed');
+      toast.error(err.response.data.message || 'Upload failed');
     } finally {
       setBulkUploading(false);
     }
   };
 
-  const openBulkModal = () => {
-    setBulkFile(null); setBulkResult(null); setBulkHospitalId('');
-    setBulkModal(true);
+  const set = (k, v) => setForm({ ...form, [k]: v });
+
+  // Computed stats for summary cards
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const stats = {
+    total: meds.length,
+    totalStock: meds.reduce((s, m) => s + Number(m.stockQuantity || 0), 0),
+    vaccines: meds.filter(m => m.category === 'vaccine'),
+    tablets: meds.filter(m => m.category === 'tablet'),
+    lowStock: meds.filter(m => Number(m.stockQuantity || 0) < 10),
+    expired: meds.filter(m => {
+      if (!m.expiryDate) return false;
+      return new Date(m.expiryDate + 'T00:00:00') < today;
+    }),
+    expiringSoon: meds.filter(m => {
+      if (!m.expiryDate) return false;
+      const exp = new Date(m.expiryDate + 'T00:00:00');
+      const diff = Math.floor((exp - today) / (1000 * 60 * 60 * 24));
+      return diff >= 0 && diff < 30;
+    }),
   };
 
-  const set = (k, v) => setForm({ ...form, [k]: v });
-  const filtered = meds.filter(m => !search || m.name.toLowerCase().includes(search.toLowerCase()) || m.genericName?.toLowerCase().includes(search.toLowerCase()));
+  // Filter logic
+  const filtered = meds.filter((m) => {
+    const q = String(search || '').toLowerCase();
+    const medName = String(m.name || '').toLowerCase();
+    const genericName = String(m.genericName || '').toLowerCase();
+    if (q && !medName.includes(q) && !genericName.includes(q)) return false;
+    if (stockFilter === 'low' && Number(m.stockQuantity || 0) >= 10) return false;
+    if (stockFilter === 'expired') {
+      if (!m.expiryDate) return false;
+      if (new Date(m.expiryDate + 'T00:00:00') >= today) return false;
+    }
+    if (stockFilter === 'expiring') {
+      if (!m.expiryDate) return false;
+      const diff = Math.floor((new Date(m.expiryDate + 'T00:00:00') - today) / (1000 * 60 * 60 * 24));
+      if (diff < 0 || diff >= 30) return false;
+    }
+    if (stockFilter === 'vaccines' && m.category !== 'vaccine') return false;
+    return true;
+  });
 
-  const columns = [
-    { key: 'name', label: 'Name', render: (v, r) => (
+  // Expiry summary counts
+  const expiryExpired = expiryData.filter(m => (m.daysRemaining || 0) < 0).length;
+  const expiryCritical = expiryData.filter(m => m.daysRemaining >= 0 && m.daysRemaining < 7).length;
+  const expiryWarning = expiryData.filter(m => m.daysRemaining >= 7 && m.daysRemaining < 30).length;
+  const expirySafe = expiryData.filter(m => m.daysRemaining >= 30).length;
+
+  const expiryColumns = [
+    { key: 'name', label: 'Medicine', render: (v, r) => (
       <div>
         <div style={{ fontWeight: 600 }}>{v}</div>
         <div style={{ fontSize: 12, color: '#64748b' }}>{r.genericName}</div>
-        {r.composition && <div style={{ fontSize: 11, color: '#3b82f6', marginTop: 2 }}>{r.composition}</div>}
       </div>
     )},
-    { key: 'category', label: 'Type', render: (v) => <Badge text={v} type={v} /> },
-    { key: 'dosage', label: 'Dosage' },
-    { key: 'stockQuantity', label: 'Stock', render: (v) => <span style={{ fontWeight: 700, color: v < 10 ? '#dc2626' : v < 50 ? '#d97706' : '#16a34a' }}>{v}</span> },
-    { key: 'unitPrice', label: 'Price', render: (v) => `₹${parseFloat(v || 0).toFixed(2)}` },
-    { key: 'expiryDate', label: 'Expiry' },
-    { key: 'requiresPrescription', label: 'Rx', render: (v) => <Badge text={v ? 'Required' : 'OTC'} type={v ? 'scheduled' : 'active'} /> },
-    { key: 'id', label: 'Actions', render: (_, r) => (
-      <div className={styles.actions}>
-        <button className={styles.btnEdit} onClick={() => openEdit(r)}>Edit</button>
-        <button className={styles.btnSuccess} onClick={() => { setStockModal(r); setStockForm({ quantity: 0, operation: 'add' }); }}>Stock</button>
-      </div>
+    { key: 'category', label: 'Category', render: (v) => <Badge text={v} type={v} /> },
+    { key: 'expiryDate', label: 'Expiry Date', render: (v) => v || '-' },
+    { key: 'daysRemaining', label: 'Status', render: (v) => (
+      <span style={{ fontWeight: 700, color: daysRemainingColor(v) }}>
+        {daysRemainingLabel(v)}
+      </span>
     )},
+    { key: 'stockQuantity', label: 'Stock', render: (v) => <span style={{ fontWeight: 700, color:v < 10 ? '#dc2626' : '#334155'}}>{v}</span> },
+    { key: 'hospital', label: 'Hospital', render: (v) => v?.name || '-' },
   ];
 
   return (
     <div>
       <div className={styles.pageHeader}>
-        <div><h2 className={styles.pageTitle}>Medications & Tablets</h2><p className={styles.pageSubtitle}>{meds.length} items in inventory</p></div>
+        <div>
+          <h2 className={styles.pageTitle}>Medications & Inventory</h2>
+          <p className={styles.pageSubtitle}>{meds.length} items  |  {stats.totalStock.toLocaleString()} total units</p>
+        </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className={styles.btnSecondary} onClick={openBulkModal}>⬆ Bulk Upload</button>
+          <button className={styles.btnSecondary} onClick={() => { setBulkFile(null); setBulkResult(null); setBulkHospitalId(''); setBulkModal(true); }}>Bulk Upload</button>
           <button className={styles.btnPrimary} onClick={openCreate}>+ Add Medication</button>
         </div>
       </div>
-      <div className={styles.filterBar}>
-        <input className={styles.searchInput} placeholder="Search medication..." value={search} onChange={(e) => setSearch(e.target.value)} />
-        <select className={styles.filterSelect} value={catFilter} onChange={(e) => setCatFilter(e.target.value)}>
-          <option value="">All Categories</option>
-          {CATEGORIES.map(c => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
-        </select>
+
+      {/* Summary stat cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 16 }}>
+        <div className={styles.card} style={{ padding: '12px 16px', borderLeft: '4px solid #2563eb', cursor: 'pointer' }}
+          onClick={() => { setStockFilter(''); setCatFilter(''); }}>
+          <div style={{ fontSize: 22, fontWeight: 700, color: '#1e293b' }}>{stats.total}</div>
+          <div style={{ fontSize: 12, color: '#64748b' }}>Total Medicines</div>
+          <div style={{ fontSize: 11, color: '#94a3b8' }}>{stats.totalStock.toLocaleString()} units in stock</div>
+        </div>
+        <div className={styles.card} style={{ padding: '12px 16px', borderLeft: '4px solid #7c3aed', cursor: 'pointer' }}
+          onClick={() => { setStockFilter('vaccines'); setCatFilter(''); setTab('list'); }}>
+          <div style={{ fontSize: 22, fontWeight: 700, color: '#1e293b' }}>{stats.vaccines.length}</div>
+          <div style={{ fontSize: 12, color: '#64748b' }}>Vaccines</div>
+          <div style={{ fontSize: 11, color: '#94a3b8' }}>{stats.vaccines.reduce((s, m) => s + Number(m.stockQuantity || 0), 0)} units</div>
+        </div>
+        <div className={styles.card} style={{ padding: '12px 16px', borderLeft: '4px solid #0891b2', cursor: 'pointer' }}
+          onClick={() => { setStockFilter(''); setCatFilter('tablet'); setTab('list'); }}>
+          <div style={{ fontSize: 22, fontWeight: 700, color: '#1e293b' }}>{stats.tablets.length}</div>
+          <div style={{ fontSize: 12, color: '#64748b' }}>Tablets</div>
+          <div style={{ fontSize: 11, color: '#94a3b8' }}>{stats.tablets.reduce((s, m) => s + Number(m.stockQuantity || 0), 0)} units</div>
+        </div>
+        <div className={styles.card} style={{ padding: '12px 16px', borderLeft: '4px solid #d97706', cursor: 'pointer' }}
+          onClick={() => { setStockFilter('low'); setCatFilter(''); setTab('list'); }}>
+          <div style={{ fontSize: 22, fontWeight: 700, color:stats.lowStock.length > 0 ? '#d97706' : '#1e293b'}}>
+            {stats.lowStock.length}
+          </div>
+          <div style={{ fontSize: 12, color: '#64748b' }}>Low Stock</div>
+          <div style={{ fontSize: 11, color: '#94a3b8' }}>Below 10 units</div>
+        </div>
+        <div className={styles.card} style={{ padding: '12px 16px', borderLeft: '4px solid #dc2626', cursor: 'pointer' }}
+          onClick={() => { setStockFilter('expired'); setCatFilter(''); setTab('list'); }}>
+          <div style={{ fontSize: 22, fontWeight: 700, color:stats.expired.length > 0 ? '#dc2626' : '#1e293b'}}>
+            {stats.expired.length}
+          </div>
+          <div style={{ fontSize: 12, color: '#64748b' }}>Expired</div>
+          <div style={{ fontSize: 11, color: '#94a3b8' }}>Past expiry date</div>
+        </div>
+        <div className={styles.card} style={{ padding: '12px 16px', borderLeft: '4px solid #f97316', cursor: 'pointer' }}
+          onClick={() => { setStockFilter('expiring'); setCatFilter(''); setTab('list'); }}>
+          <div style={{ fontSize: 22, fontWeight: 700, color:stats.expiringSoon.length > 0 ? '#f97316' : '#1e293b'}}>
+            {stats.expiringSoon.length}
+          </div>
+          <div style={{ fontSize: 12, color: '#64748b' }}>Expiring Soon</div>
+          <div style={{ fontSize: 11, color: '#94a3b8' }}>Within 30 days</div>
+        </div>
       </div>
-      <div className={styles.card}><Table columns={columns} data={filtered} loading={loading} /></div>
+
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <button className={tab === 'list' ? styles.btnPrimary : styles.btnSecondary} onClick={() => setTab('list')}>
+          Inventory
+        </button>
+        <button className={tab === 'expiry' ? styles.btnPrimary : styles.btnSecondary} onClick={() => setTab('expiry')}>
+          Warning Expiry Alerts
+          {expiryData.length > 0 && tab !== 'expiry' && (
+            <span style={{ marginLeft: 6, background: '#dc2626', color: '#fff', borderRadius: 999, fontSize: 11, fontWeight: 700, padding: '1px 6px' }}>
+              {expiryData.length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {tab === 'list' && (
+        <>
+          <div className={styles.filterBar}>
+            <input className={styles.searchInput} placeholder="Search medication..." value={search} onChange={(e) => setSearch(e.target.value)} />
+            <select className={styles.filterSelect} value={catFilter} onChange={(e) => { setCatFilter(e.target.value); setStockFilter(''); }}>
+              <option value="">All Categories</option>
+              {CATEGORIES.map(c => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
+            </select>
+            <select className={styles.filterSelect} value={stockFilter} onChange={(e) => { setStockFilter(e.target.value); setCatFilter(''); }}>
+              <option value="">All Stock Status</option>
+              <option value="low">Warning Low Stock (&lt;10)</option>
+              <option value="expired">Expired</option>
+              <option value="expiring">Expiring within 30 days</option>
+              <option value="vaccines">Vaccine Vaccines only</option>
+            </select>
+            {(stockFilter || catFilter || search) && (
+              <button className={styles.btnSecondary} onClick={() => { setSearch(''); setCatFilter(''); setStockFilter(''); }}>
+                Clear Filters
+              </button>
+            )}
+          </div>
+
+          {/* Legend for row colors */}
+          <div style={{ display: 'flex', gap: 12, marginBottom: 10, fontSize: 12, color: '#64748b', flexWrap: 'wrap' }}>
+            <span>Row color:</span>
+            <span style={{ background: '#fef2f2', padding: '1px 8px', borderRadius: 4, color: '#b91c1c', fontWeight: 600 }}>Expired</span>
+            <span style={{ background: '#fff7ed', padding: '1px 8px', borderRadius: 4, color: '#92400e', fontWeight: 600 }}>Expiring within 30 days</span>
+            <span style={{ background: '#fefce8', padding: '1px 8px', borderRadius: 4, color: '#854d0e', fontWeight: 600 }}>Expiring within 60 days</span>
+          </div>
+
+          <div className={styles.card} style={{ overflow: 'hidden' }}>
+            {loading ? (
+              <div style={{ padding: 40, textAlign: 'center', color: '#64748b' }}>Loading...</div>
+            ) : filtered.length === 0 ? (
+              <div style={{ padding: 40, textAlign: 'center', color: '#94a3b8' }}>No medicines found</div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                      {['Medicine', 'HSN', 'Type', 'Dosage', 'Stock', 'Price', 'GST', 'Expiry', 'Rx', 'Actions'].map(h => (
+                        <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#64748b', whiteSpace: 'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((m) => {
+                      const days = getMedDaysRemaining(m.expiryDate);
+                      const rowBg = getRowBg(days);
+                      return (
+                        <tr key={m.id} style={{ background: rowBg, borderBottom: '1px solid #f1f5f9', transition: 'opacity 0.1s' }}>
+                          <td style={{ padding: '10px 12px' }}>
+                            <div style={{ fontWeight: 600, color: '#1e293b' }}>{m.name}</div>
+                            {m.genericName && <div style={{ fontSize: 11, color: '#64748b' }}>{m.genericName}</div>}
+                            {m.composition && <div style={{ fontSize: 10, color: '#3b82f6', marginTop: 1 }}>{m.composition}</div>}
+                            {m.barcode && <div style={{ fontSize: 10, color: '#94a3b8', fontFamily: 'monospace' }}>|||  {m.barcode}</div>}
+                          </td>
+                          <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+                            {m.hsnCode ? (
+                              <span style={{ fontFamily: 'monospace', fontSize: 12, background: '#f0fdf4', color: '#15803d', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>
+                                {m.hsnCode}
+                              </span>
+                            ) : <span style={{ color: '#cbd5e1', fontSize: 12 }}>-</span>}
+                          </td>
+                          <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+                            <Badge text={m.category} type={m.category} />
+                          </td>
+                          <td style={{ padding: '10px 12px', color: '#475569' }}>{m.dosage || '-'}</td>
+                          <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+                            <span style={{
+                              fontWeight: 700,
+                              color: Number(m.stockQuantity) < 10 ? '#dc2626' : Number(m.stockQuantity) < 50 ? '#d97706' : '#16a34a',
+                            }}>
+                              {m.stockQuantity}
+                            </span>
+                            {Number(m.stockQuantity) < 10 && (
+                              <span style={{ marginLeft: 4, fontSize: 10, color: '#dc2626', fontWeight: 600 }}>LOW</span>
+                            )}
+                          </td>
+                          <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+                            Rs {parseFloat(m.unitPrice || 0).toFixed(2)}
+                          </td>
+                          <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+                            <span style={{
+                              background: Number(m.gstRate || 0) === 0 ? '#f1f5f9' : '#dcfce7',
+                              color: Number(m.gstRate || 0) === 0 ? '#64748b' : '#15803d',
+                              padding: '2px 7px', borderRadius: 999, fontSize: 11, fontWeight: 600,
+                            }}>
+                              {Number(m.gstRate || 0) === 0 ? 'Exempt' : `${Number(m.gstRate)}%`}
+                            </span>
+                          </td>
+                          <td style={{ padding: '10px 12px', minWidth: 120 }}>
+                            <ExpiryBadge expiryDate={m.expiryDate} />
+                          </td>
+                          <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+                            <Badge text={m.requiresPrescription ? 'Required' : 'OTC'} type={m.requiresPrescription ? 'scheduled' : 'active'} />
+                          </td>
+                          <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+                            <div className={styles.actions}>
+                              <button className={styles.btnEdit} onClick={() => openEdit(m)}>Edit</button>
+                              <button className={styles.btnSuccess} onClick={() => { setStockModal(m); setStockForm({ quantity: 0, operation: 'add' }); }}>Stock</button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+          <div style={{ marginTop: 6, fontSize: 12, color: '#94a3b8' }}>
+            Showing {filtered.length} of {meds.length} medicines
+          </div>
+        </>
+      )}
+
+      {tab === 'expiry' && (
+        <div>
+          <div className={`${styles.card} ${styles.filterBar}`} style={{ padding: '12px 16px', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+              <label style={{ color: '#64748b', fontWeight: 500 }}>Expiring within:</label>
+              <select className={styles.filterSelect} value={expiryDays} onChange={(e) => setExpiryDays(Number(e.target.value))}>
+                <option value={7}>7 days</option>
+                <option value={15}>15 days</option>
+                <option value={30}>30 days</option>
+                <option value={60}>60 days</option>
+                <option value={90}>90 days</option>
+              </select>
+            </div>
+            <select className={styles.filterSelect} value={expiryCat} onChange={(e) => setExpiryCat(e.target.value)}>
+              <option value="">All Categories</option>
+              {CATEGORIES.map(c => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
+            </select>
+            <SearchableSelect
+              className={styles.filterSelect}
+              value={expiryHospital}
+              onChange={setExpiryHospital}
+              options={hospitals.map((h) => ({ value: h.id, label: h.name }))}
+              placeholder="Search hospital..."
+              emptyLabel="All Hospitals"
+            />
+            <button className={styles.btnPrimary} onClick={loadExpiry}>Apply</button>
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+            {[
+              { label: 'Expired', count: expiryExpired, bg: '#fee2e2', color: '#b91c1c' },
+              { label: 'Critical (<7d)', count: expiryCritical, bg: '#fef3c7', color: '#92400e' },
+              { label: 'Warning (7-30d)', count: expiryWarning, bg: '#fff7ed', color: '#c2410c' },
+              { label: 'Safe (>30d)', count: expirySafe, bg: '#dcfce7', color: '#15803d' },
+            ].map((s) => (
+              <div key={s.label} style={{ background: s.bg, color: s.color, padding: '8px 16px', borderRadius: 10, fontSize: 13, fontWeight: 600 }}>
+                {s.count} {s.label}
+              </div>
+            ))}
+          </div>
+
+          {expiryLoading ? (
+            <div style={{ padding: 40, textAlign: 'center', color: '#64748b' }}>Loading...</div>
+          ) : expiryData.length === 0 ? (
+            <div className={styles.card} style={{ padding: 40, textAlign: 'center', color: '#94a3b8' }}>
+              No medicines found expiring within selected period
+            </div>
+          ) : (
+            <div className={styles.card} style={{ overflow: 'hidden' }}>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                      {['Medicine', 'Category', 'Expiry Date', 'Status', 'Stock', 'Hospital'].map(h => (
+                        <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#64748b' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {expiryData.map((m) => {
+                      const rowBg = getRowBg(m.daysRemaining);
+                      return (
+                        <tr key={m.id} style={{ background: rowBg, borderBottom: '1px solid #f1f5f9' }}>
+                          <td style={{ padding: '10px 12px' }}>
+                            <div style={{ fontWeight: 600 }}>{m.name}</div>
+                            <div style={{ fontSize: 11, color: '#64748b' }}>{m.genericName}</div>
+                          </td>
+                          <td style={{ padding: '10px 12px' }}><Badge text={m.category} type={m.category} /></td>
+                          <td style={{ padding: '10px 12px', fontFamily: 'monospace', color: '#475569' }}>{m.expiryDate || '-'}</td>
+                          <td style={{ padding: '10px 12px', fontWeight: 700, color: daysRemainingColor(m.daysRemaining) }}>
+                            {daysRemainingLabel(m.daysRemaining)}
+                          </td>
+                          <td style={{ padding: '10px 12px', fontWeight: 700, color:m.stockQuantity < 10 ? '#dc2626' : '#334155'}}>
+                            {m.stockQuantity}
+                          </td>
+                          <td style={{ padding: '10px 12px', color: '#64748b' }}>{m.hospital?.name || '-'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Add / Edit Modal */}
       <Modal isOpen={modal} onClose={() => setModal(false)} title={editing ? 'Edit Medication' : 'Add Medication'} size="lg">
@@ -155,14 +562,33 @@ export default function Medications() {
             </div>
             <div className={styles.field}><label className={styles.label}>Dosage (e.g. 500mg)</label><input className={styles.input} value={form.dosage || ''} onChange={(e) => set('dosage', e.target.value)} /></div>
             <div className={styles.field}><label className={styles.label}>Manufacturer</label><input className={styles.input} value={form.manufacturer || ''} onChange={(e) => set('manufacturer', e.target.value)} /></div>
-            <div className={styles.field}><label className={styles.label}>Unit Price (₹)</label><input type="number" step="0.01" className={styles.input} value={form.unitPrice} onChange={(e) => set('unitPrice', e.target.value)} /></div>
+            <div className={styles.field}><label className={styles.label}>Unit Price / MRP (Rs )</label><input type="number" step="0.01" className={styles.input} value={form.unitPrice} onChange={(e) => set('unitPrice', e.target.value)} /></div>
+            <div className={styles.field}><label className={styles.label}>Purchase Price / Cost (Rs )</label><input type="number" step="0.01" placeholder="Cost price from supplier" className={styles.input} value={form.purchasePrice} onChange={(e) => set('purchasePrice', e.target.value)} /></div>
+            <div className={styles.field}><label className={styles.label}>GST Rate</label>
+              <select className={styles.input} value={Number(form.gstRate || 0)} onChange={(e) => set('gstRate', Number(e.target.value))}>
+                <option value={0}>0% - Exempt (no GST)</option>
+                <option value={5}>5% - Essential medicines</option>
+                <option value={12}>12%</option>
+                <option value={18}>18%</option>
+                <option value={28}>28%</option>
+              </select>
+            </div>
+            <div className={styles.field}><label className={styles.label}>HSN Code</label><input className={styles.input} placeholder="e.g. 3004 (medicines), 3002 (vaccines)" value={form.hsnCode || ''} onChange={(e) => set('hsnCode', e.target.value)} maxLength={10} /></div>
+            <div className={styles.field}><label className={styles.label}>Barcode (EAN/UPC)</label><input className={styles.input} placeholder="Scan or enter barcode" value={form.barcode || ''} onChange={(e) => set('barcode', e.target.value)} /></div>
+            <div className={styles.field}><label className={styles.label}>Supplier / Vendor</label><input className={styles.input} placeholder="Default supplier name" value={form.supplierName || ''} onChange={(e) => set('supplierName', e.target.value)} /></div>
             <div className={styles.field}><label className={styles.label}>Stock Quantity</label><input type="number" className={styles.input} value={form.stockQuantity} onChange={(e) => set('stockQuantity', e.target.value)} /></div>
+            <div className={styles.field}><label className={styles.label}>Opening Batch No (create only)</label><input className={styles.input} placeholder="e.g. OPEN-A1" value={form.batchNo || ''} onChange={(e) => set('batchNo', e.target.value)} /></div>
+            <div className={styles.field}><label className={styles.label}>Opening Mfg Date (create only)</label><input type="date" className={styles.input} value={form.mfgDate || ''} onChange={(e) => set('mfgDate', e.target.value)} /></div>
             <div className={styles.field}><label className={styles.label}>Expiry Date</label><input type="date" className={styles.input} value={form.expiryDate || ''} onChange={(e) => set('expiryDate', e.target.value)} /></div>
             <div className={styles.field}><label className={styles.label}>Hospital</label>
-              <select className={styles.input} value={form.hospitalId || ''} onChange={(e) => set('hospitalId', e.target.value)}>
-                <option value="">Select Hospital</option>
-                {hospitals.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
-              </select>
+              <SearchableSelect
+                className={styles.input}
+                value={form.hospitalId || ''}
+                onChange={(value) => set('hospitalId', value)}
+                options={hospitals.map((h) => ({ value: h.id, label: h.name }))}
+                placeholder="Search hospital..."
+                emptyLabel="Select Hospital"
+              />
             </div>
             <div className={styles.field}><label className={styles.label}>Prescription Required</label>
               <select className={styles.input} value={form.requiresPrescription ? 'true' : 'false'} onChange={(e) => set('requiresPrescription', e.target.value === 'true')}>
@@ -172,6 +598,11 @@ export default function Medications() {
             </div>
             <div className={styles.field} style={{ gridColumn: 'span 2' }}><label className={styles.label}>Description</label><textarea className={styles.input} rows={2} value={form.description || ''} onChange={(e) => set('description', e.target.value)} /></div>
             <div className={styles.field} style={{ gridColumn: 'span 2' }}><label className={styles.label}>Side Effects</label><textarea className={styles.input} rows={2} value={form.sideEffects || ''} onChange={(e) => set('sideEffects', e.target.value)} /></div>
+            {!editing && (
+              <div className={styles.field} style={{ gridColumn: 'span 2', fontSize: 12, color: '#64748b' }}>
+                If stock quantity is greater than 0, opening batch and stock ledger entries are created automatically.
+              </div>
+            )}
           </div>
           <div className={styles.formActions}>
             <button type="button" className={styles.btnSecondary} onClick={() => setModal(false)}>Cancel</button>
@@ -181,112 +612,90 @@ export default function Medications() {
       </Modal>
 
       {/* Stock Modal */}
-      <Modal isOpen={!!stockModal} onClose={() => setStockModal(null)} title={`Update Stock — ${stockModal?.name}`} size="sm">
-        <form onSubmit={handleStock} className={styles.form}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
-            <div style={{ background: '#f8fafc', padding: '12px 16px', borderRadius: 8, fontSize: 14 }}>
-              Current Stock: <strong>{stockModal?.stockQuantity}</strong> units
+      <Modal isOpen={!!stockModal} onClose={() => setStockModal(null)} title={`Update Stock - ${stockModal?.name || ''}`} size="sm">
+        {stockModal && (
+          <form onSubmit={handleStock} className={styles.form}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
+              <div style={{ background: '#f8fafc', padding: '12px 16px', borderRadius: 8, fontSize: 14 }}>
+                Current Stock: <strong>{Number(stockModal.stockQuantity || 0)}</strong> units
+                {stockModal.expiryDate && (
+                  <div style={{ marginTop: 4, fontSize: 12 }}>
+                    Expires: <strong>{stockModal.expiryDate}</strong>
+                    {getMedDaysRemaining(stockModal.expiryDate) < 30 && (
+                      <span style={{ marginLeft: 6, color: '#dc2626', fontWeight: 600 }}>
+                        Warning {getMedDaysRemaining(stockModal.expiryDate) < 0 ? 'EXPIRED' : `${getMedDaysRemaining(stockModal.expiryDate)}d remaining`}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className={styles.field}><label className={styles.label}>Operation</label>
+                <select className={styles.input} value={stockForm.operation} onChange={(e) => setStockForm({ ...stockForm, operation: e.target.value })}>
+                  <option value="add">Add Stock</option>
+                  <option value="subtract">Remove Stock</option>
+                </select>
+              </div>
+              <div className={styles.field}><label className={styles.label}>Quantity</label>
+                <input type="number" className={styles.input} min={1} value={stockForm.quantity} onChange={(e) => setStockForm({ ...stockForm, quantity: parseInt(e.target.value) })} required />
+              </div>
             </div>
-            <div className={styles.field}><label className={styles.label}>Operation</label>
-              <select className={styles.input} value={stockForm.operation} onChange={(e) => setStockForm({ ...stockForm, operation: e.target.value })}>
-                <option value="add">Add Stock</option><option value="subtract">Remove Stock</option>
-              </select>
+            <div className={styles.formActions}>
+              <button type="button" className={styles.btnSecondary} onClick={() => setStockModal(null)}>Cancel</button>
+              <button type="submit" className={styles.btnPrimary}>Update Stock</button>
             </div>
-            <div className={styles.field}><label className={styles.label}>Quantity</label><input type="number" className={styles.input} min={1} value={stockForm.quantity} onChange={(e) => setStockForm({ ...stockForm, quantity: parseInt(e.target.value) })} required /></div>
-          </div>
-          <div className={styles.formActions}>
-            <button type="button" className={styles.btnSecondary} onClick={() => setStockModal(null)}>Cancel</button>
-            <button type="submit" className={styles.btnPrimary}>Update Stock</button>
-          </div>
-        </form>
+          </form>
+        )}
       </Modal>
 
       {/* Bulk Upload Modal */}
       <Modal isOpen={bulkModal} onClose={() => { setBulkModal(false); setBulkResult(null); }} title="Bulk Upload Medications" size="md">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-          {/* Step 1: Download template */}
           <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: '16px 20px' }}>
-            <div style={{ fontWeight: 600, color: '#1e40af', marginBottom: 6 }}>Step 1 — Download Template</div>
+            <div style={{ fontWeight: 600, color: '#1e40af', marginBottom: 6 }}>Step 1 - Download Template</div>
             <div style={{ fontSize: 13, color: '#374151', marginBottom: 12 }}>
               Download the Excel template, fill in your medications data, and then upload it below.
-              The template includes sample rows and an Instructions sheet explaining each column.
             </div>
-            <button
-              onClick={handleDownloadTemplate}
-              style={{ background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
-            >
-              ⬇ Download Template (.xlsx)
+            <button onClick={handleDownloadTemplate} style={{ background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+              Download Template (.xlsx)
             </button>
           </div>
 
-          {/* Step 2: Upload */}
           <form onSubmit={handleBulkUpload} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div style={{ fontWeight: 600, color: '#1e40af' }}>Step 2 — Upload Filled Template</div>
-
+            <div style={{ fontWeight: 600, color: '#1e40af' }}>Step 2 - Upload Filled Template</div>
             <div className={styles.field}>
               <label className={styles.label}>Hospital (optional)</label>
-              <select className={styles.input} value={bulkHospitalId} onChange={(e) => setBulkHospitalId(e.target.value)}>
-                <option value="">— All / No specific hospital —</option>
-                {hospitals.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
-              </select>
-            </div>
-
-            <div
-              onClick={() => fileInputRef.current?.click()}
-              style={{
-                border: '2px dashed #93c5fd', borderRadius: 10, padding: '24px 16px',
-                textAlign: 'center', cursor: 'pointer', background: bulkFile ? '#f0fdf4' : '#f8fafc',
-                transition: 'background 0.2s',
-              }}
-            >
-              <input
-                ref={fileInputRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }}
-                onChange={(e) => { setBulkFile(e.target.files[0] || null); setBulkResult(null); }}
+              <SearchableSelect
+                className={styles.input}
+                value={bulkHospitalId}
+                onChange={setBulkHospitalId}
+                options={hospitals.map((h) => ({ value: h.id, label: h.name }))}
+                placeholder="Search hospital..."
+                emptyLabel="- All / No specific hospital -"
               />
+            </div>
+            <div onClick={() => fileInputRef.current.click()} style={{ border: '2px dashed #93c5fd', borderRadius: 10, padding: '24px 16px', textAlign: 'center', cursor: 'pointer', background:bulkFile ? '#f0fdf4' : '#f8fafc'}}>
+              <input ref={fileInputRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }} onChange={(e) => { setBulkFile(e.target.files[0] || null); setBulkResult(null); }} />
               {bulkFile ? (
-                <div>
-                  <div style={{ fontSize: 28, marginBottom: 6 }}>📊</div>
-                  <div style={{ fontWeight: 600, color: '#15803d' }}>{bulkFile.name}</div>
-                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
-                    {(bulkFile.size / 1024).toFixed(1)} KB — Click to change
-                  </div>
-                </div>
+                <div><div style={{ fontSize: 28 }}>File Ready</div><div style={{ fontWeight: 600, color: '#15803d' }}>{bulkFile.name}</div><div style={{ fontSize: 12, color: '#64748b' }}>{(bulkFile.size / 1024).toFixed(1)} KB</div></div>
               ) : (
-                <div>
-                  <div style={{ fontSize: 28, marginBottom: 6 }}>📂</div>
-                  <div style={{ fontWeight: 600, color: '#374151' }}>Click to select Excel file</div>
-                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>.xlsx or .xls — max 5 MB</div>
-                </div>
+                <div><div style={{ fontSize: 28 }}>Select File</div><div style={{ fontWeight: 600 }}>Click to select Excel file</div><div style={{ fontSize: 12, color: '#64748b' }}>.xlsx or .xls</div></div>
               )}
             </div>
-
-            {/* Result summary */}
             {bulkResult && (
               <div style={{ borderRadius: 8, overflow: 'hidden' }}>
-                <div style={{
-                  background: bulkResult.errors.length === 0 ? '#dcfce7' : '#fef3c7',
-                  padding: '12px 16px', fontWeight: 600,
-                  color: bulkResult.errors.length === 0 ? '#15803d' : '#92400e',
-                }}>
+                <div style={{ background:bulkResult.errors.length === 0 ? '#dcfce7' : '#fef3c7', padding: '12px 16px', fontWeight: 600, color:bulkResult.errors.length === 0 ? '#15803d' : '#92400e'}}>
                   {bulkResult.message}
                 </div>
                 {bulkResult.errors.length > 0 && (
                   <div style={{ background: '#fff7ed', padding: '10px 16px', maxHeight: 160, overflowY: 'auto' }}>
-                    {bulkResult.errors.map((e, i) => (
-                      <div key={i} style={{ fontSize: 12, color: '#b45309', padding: '2px 0' }}>
-                        Row {e.row}: {e.error}
-                      </div>
-                    ))}
+                    {bulkResult.errors.map((e, i) => <div key={i} style={{ fontSize: 12, color: '#b45309' }}>Row {e.row}: {e.error}</div>)}
                   </div>
                 )}
               </div>
             )}
-
             <div className={styles.formActions}>
               <button type="button" className={styles.btnSecondary} onClick={() => { setBulkModal(false); setBulkResult(null); }}>Close</button>
-              <button type="submit" className={styles.btnPrimary} disabled={!bulkFile || bulkUploading}>
-                {bulkUploading ? 'Uploading...' : '⬆ Upload & Import'}
-              </button>
+              <button type="submit" className={styles.btnPrimary} disabled={!bulkFile || bulkUploading}>{bulkUploading ? 'Uploading...' : 'Upload & Import'}</button>
             </div>
           </form>
         </div>

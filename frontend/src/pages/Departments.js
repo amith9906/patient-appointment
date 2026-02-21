@@ -3,6 +3,7 @@ import { departmentAPI, hospitalAPI } from '../services/api';
 import Modal from '../components/Modal';
 import Table from '../components/Table';
 import Badge from '../components/Badge';
+import SearchableSelect from '../components/SearchableSelect';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
 
@@ -35,11 +36,11 @@ export default function Departments() {
       if (editing) { await departmentAPI.update(editing.id, form); toast.success('Department updated'); }
       else { await departmentAPI.create(form); toast.success('Department created'); }
       setModal(false); load();
-    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.response.data.message || 'Error'); }
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Deactivate this department?')) return;
+    if (!window.confirm('Deactivate this department')) return;
     try { await departmentAPI.delete(id); toast.success('Department deactivated'); load(); }
     catch { toast.error('Error'); }
   };
@@ -48,9 +49,9 @@ export default function Departments() {
 
   const columns = [
     { key: 'name', label: 'Department Name', render: (v) => <div style={{ fontWeight: 600 }}>{v}</div> },
-    { key: 'hospital', label: 'Hospital', render: (v) => v?.name || '—' },
+    { key: 'hospital', label: 'Hospital', render: (v) => v.name || '-' },
     { key: 'floor', label: 'Floor' },
-    { key: 'description', label: 'Description', render: (v) => v ? v.slice(0, 60) + (v.length > 60 ? '...' : '') : '—' },
+    { key: 'description', label: 'Description', render: (v) => v ? v.slice(0, 60) + (v.length > 60 ? '...' : '') : '-' },
     { key: 'isActive', label: 'Status', render: (v) => <Badge text={v ? 'Active' : 'Inactive'} type={v ? 'active' : 'inactive'} /> },
     { key: 'id', label: 'Actions', render: (_, r) => (
       <div className={styles.actions}>
@@ -67,10 +68,14 @@ export default function Departments() {
         <button className={styles.btnPrimary} onClick={openCreate}>+ Add Department</button>
       </div>
       <div className={styles.filterBar}>
-        <select className={styles.filterSelect} value={hospitalFilter} onChange={(e) => setHospitalFilter(e.target.value)}>
-          <option value="">All Hospitals</option>
-          {hospitals.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
-        </select>
+        <SearchableSelect
+          className={styles.filterSelect}
+          value={hospitalFilter}
+          onChange={setHospitalFilter}
+          options={hospitals.map((h) => ({ value: h.id, label: h.name }))}
+          placeholder="Search hospital..."
+          emptyLabel="All Hospitals"
+        />
       </div>
       <div className={styles.card}><Table columns={columns} data={departments} loading={loading} /></div>
 
@@ -79,10 +84,15 @@ export default function Departments() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
             <div className={styles.field}><label className={styles.label}>Department Name *</label><input className={styles.input} value={form.name} onChange={(e) => set('name', e.target.value)} required /></div>
             <div className={styles.field}><label className={styles.label}>Hospital *</label>
-              <select className={styles.input} value={form.hospitalId || ''} onChange={(e) => set('hospitalId', e.target.value)} required>
-                <option value="">Select Hospital</option>
-                {hospitals.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
-              </select>
+              <SearchableSelect
+                className={styles.input}
+                value={form.hospitalId || ''}
+                onChange={(value) => set('hospitalId', value)}
+                options={hospitals.map((h) => ({ value: h.id, label: h.name }))}
+                placeholder="Search hospital..."
+                emptyLabel="Select Hospital"
+                required
+              />
             </div>
             <div className={styles.field}><label className={styles.label}>Floor</label><input className={styles.input} value={form.floor || ''} onChange={(e) => set('floor', e.target.value)} placeholder="e.g. 2nd Floor, Wing B" /></div>
             <div className={styles.field}><label className={styles.label}>Description</label><textarea className={styles.input} rows={3} value={form.description || ''} onChange={(e) => set('description', e.target.value)} /></div>

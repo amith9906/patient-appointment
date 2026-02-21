@@ -21,6 +21,10 @@ const Patient = sequelize.define('Patient', {
   medicalHistory: { type: DataTypes.TEXT },
   insuranceProvider: { type: DataTypes.STRING },
   insuranceNumber: { type: DataTypes.STRING },
+  referralSource: { type: DataTypes.STRING(120) },
+  referralDetail: { type: DataTypes.STRING(200) },
+  chronicConditions: { type: DataTypes.JSONB, defaultValue: [] },
+  clinicalAlerts: { type: DataTypes.JSONB, defaultValue: [] },
   isActive: { type: DataTypes.BOOLEAN, defaultValue: true },
   userId: { type: DataTypes.UUID, allowNull: true, comment: 'Linked user account for patient self-service' },
 }, {

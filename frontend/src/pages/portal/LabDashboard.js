@@ -94,23 +94,23 @@ export default function LabDashboard() {
                 <div>
                   <div className="font-semibold text-gray-800">{t.testName} <span className="text-sm font-normal text-gray-500">({t.testCode})</span></div>
                   <div className="text-sm text-gray-500 mt-0.5">
-                    {t.patient?.name} · <span className="font-mono text-xs">{t.patient?.patientId}</span>
+                    {t.patient.name}  |  <span className="font-mono text-xs">{t.patient.patientId}</span>
                   </div>
                   <div className="text-xs text-gray-400 mt-1">
-                    Lab: {t.lab?.name} · #{t.testNumber} · ${t.price} · {t.category}
+                    Lab: {t.lab.name}  |  #{t.testNumber}  |  ${t.price}  |  {t.category}
                   </div>
                   {t.normalRange && <div className="text-xs text-gray-400">Normal: {t.normalRange} {t.unit}</div>}
                 </div>
                 <div className="flex flex-col items-end gap-2">
                   <span className={`text-xs px-2 py-1 rounded-full font-semibold ${STATUS_COLORS[t.status] || ''}`}>{STATUS_LABELS[t.status]}</span>
-                  {t.isAbnormal && <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">⚠️ Abnormal</span>}
+                  {t.isAbnormal && <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">Warning️ Abnormal</span>}
                 </div>
               </div>
               {t.status !== 'completed' && t.status !== 'cancelled' && STATUS_FLOW[t.status] && (
                 <div className="mt-3 pt-3 border-t border-gray-50">
                   <button onClick={() => advance(t)}
                     className="text-sm bg-gray-800 text-white px-4 py-2 rounded-lg hover:bg-gray-700 font-medium transition-colors">
-                    → {NEXT_LABELS[t.status]}
+                    {'->'} {NEXT_LABELS[t.status]}
                   </button>
                 </div>
               )}
@@ -118,12 +118,12 @@ export default function LabDashboard() {
                 <div className="mt-3 pt-3 border-t border-gray-50 flex items-center gap-3">
                   {t.result && (
                     <div className="flex-1 bg-green-50 rounded-lg p-3 text-sm">
-                      <span className="font-medium text-green-700">Result:</span> {t.resultValue} — {t.result.slice(0,100)}
+                      <span className="font-medium text-green-700">Result:</span> {t.resultValue} - {t.result.slice(0,100)}
                     </div>
                   )}
                   <button onClick={() => downloadReport(t)}
                     className="flex items-center gap-1.5 px-3 py-2 bg-gray-800 text-white text-xs font-medium rounded-lg hover:bg-gray-700 transition-colors whitespace-nowrap">
-                    📄 Download Report
+                    Doc Download Report
                   </button>
                 </div>
               )}
@@ -137,7 +137,7 @@ export default function LabDashboard() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-md shadow-xl">
             <div className="p-5 border-b flex justify-between items-center">
-              <h3 className="font-bold text-gray-800">Enter Results — {resultModal.testName}</h3>
+              <h3 className="font-bold text-gray-800">Enter Results - {resultModal.testName}</h3>
               <button onClick={() => setResultModal(null)} className="text-gray-400 hover:text-gray-600">✕</button>
             </div>
             <form onSubmit={submitResult} className="p-5 space-y-4">
@@ -153,7 +153,7 @@ export default function LabDashboard() {
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
               </div>
               <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-700">Abnormal Result?</label>
+                <label className="text-sm font-medium text-gray-700">Abnormal Result</label>
                 <select value={resultForm.isAbnormal ? 'true' : 'false'} onChange={e => setResultForm(f => ({...f, isAbnormal: e.target.value === 'true'}))}
                   className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none">
                   <option value="false">Normal</option><option value="true">Abnormal</option>

@@ -27,11 +27,11 @@ export default function Hospitals() {
       if (editing) { await hospitalAPI.update(editing.id, form); toast.success('Hospital updated'); }
       else { await hospitalAPI.create(form); toast.success('Hospital created'); }
       setModal(false); load();
-    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.response.data.message || 'Error'); }
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Deactivate this hospital?')) return;
+    if (!window.confirm('Deactivate this hospital')) return;
     try { await hospitalAPI.delete(id); toast.success('Hospital deactivated'); load(); }
     catch (err) { toast.error('Error'); }
   };

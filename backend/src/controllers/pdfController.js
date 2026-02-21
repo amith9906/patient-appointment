@@ -1,11 +1,93 @@
 const PDFDocument = require('pdfkit');
-const { Appointment, Doctor, Patient, Hospital, HospitalSettings, Prescription, Medication, LabTest, Lab } = require('../models');
+const {
+  Appointment,
+  Doctor,
+  Patient,
+  Hospital,
+  HospitalSettings,
+  Prescription,
+  Medication,
+  LabTest,
+  Lab,
+  MedicineInvoice,
+  MedicineInvoiceItem,
+  MedicineInvoiceReturn,
+  MedicineInvoiceReturnItem,
+  StockPurchase,
+  StockPurchaseReturn,
+  Vendor,
+  User,
+} = require('../models');
+const { ensureScopedHospital, isSuperAdmin } = require('../utils/accessScope');
+const { LANGUAGE_MAP } = require('../utils/translator');
 
 // ─── Shared defaults ────────────────────────────────────────────────────────
 const DEFAULTS = {
   receiptFooter: 'Thank you for choosing our hospital. Get well soon!',
   currency: '₹', showLogoOnReceipt: true, showGSTINOnReceipt: true, showDoctorOnReceipt: true,
 };
+
+async function ensureAppointmentPdfAccess(req, res, appointment) {
+  if (req.user.role === 'patient') {
+    if (!appointment.patient || appointment.patient.userId !== req.user.id) {
+      res.status(403).json({ message: 'Access denied for this appointment document' });
+      return false;
+    }
+    return true;
+  }
+
+  const scope = await ensureScopedHospital(req, res);
+  if (!scope.allowed) return false;
+  if (isSuperAdmin(req.user)) return true;
+
+  const hospitalId = appointment.doctor?.hospitalId || appointment.patient?.hospitalId || null;
+  if (!hospitalId || hospitalId !== scope.hospitalId) {
+    res.status(403).json({ message: 'Access denied for this hospital document' });
+    return false;
+  }
+  return true;
+}
+
+async function ensureLabReportAccess(req, res, labTest) {
+  if (req.user.role === 'patient') {
+    if (!labTest.patient || labTest.patient.userId !== req.user.id) {
+      res.status(403).json({ message: 'Access denied for this lab report' });
+      return false;
+    }
+    return true;
+  }
+
+  const scope = await ensureScopedHospital(req, res);
+  if (!scope.allowed) return false;
+  if (isSuperAdmin(req.user)) return true;
+
+  const hospitalId = labTest.lab?.hospitalId || null;
+  if (!hospitalId || hospitalId !== scope.hospitalId) {
+    res.status(403).json({ message: 'Access denied for this hospital report' });
+    return false;
+  }
+  return true;
+}
+
+async function ensureMedicineInvoiceAccess(req, res, invoice) {
+  if (req.user.role === 'patient') {
+    if (!invoice.patient || invoice.patient.userId !== req.user.id) {
+      res.status(403).json({ message: 'Access denied for this medicine invoice' });
+      return false;
+    }
+    return true;
+  }
+
+  const scope = await ensureScopedHospital(req, res);
+  if (!scope.allowed) return false;
+  if (isSuperAdmin(req.user)) return true;
+
+  if (invoice.hospitalId !== scope.hospitalId) {
+    res.status(403).json({ message: 'Access denied for this hospital invoice' });
+    return false;
+  }
+  return true;
+}
 
 async function getSettings(hospitalId) {
   const [settings] = await HospitalSettings.findOrCreate({
@@ -95,6 +177,21 @@ function fmtMoney(val, currency) {
   return `${currency}${n.toFixed(2)}`;
 }
 
+function normalizedTranslations(value) {
+  if (!value) return {};
+  const src = typeof value === 'string' ? (() => {
+    try { return JSON.parse(value); } catch { return {}; }
+  })() : value;
+  if (!src || typeof src !== 'object' || Array.isArray(src)) return {};
+  const out = {};
+  Object.keys(src).forEach((k) => {
+    const code = String(k || '').toLowerCase();
+    const txt = String(src[k] || '').trim();
+    if (txt) out[code] = txt;
+  });
+  return out;
+}
+
 // ─── 1. Prescription PDF ──────────────────────────────────────────────────────
 exports.generatePrescription = async (req, res) => {
   try {
@@ -112,6 +209,7 @@ exports.generatePrescription = async (req, res) => {
       ],
     });
     if (!appointment) return res.status(404).json({ message: 'Appointment not found' });
+    if (!(await ensureAppointmentPdfAccess(req, res, appointment))) return;
 
     const hospital = appointment.doctor?.hospital;
     if (!hospital) return res.status(400).json({ message: 'Hospital not found for this appointment' });
@@ -195,9 +293,22 @@ exports.generatePrescription = async (req, res) => {
         }
 
         // ── Line 4: multilingual notes
-        if (p.instructions) {
+        const originalInstruction = p.instructionsOriginal || p.instructions;
+        const translatedInstructions = normalizedTranslations(p.translatedInstructions);
+
+        if (originalInstruction) {
           doc.fontSize(8.5).font('Helvetica-Oblique').fillColor('#92400e')
-             .text(`       Note: ${p.instructions}`, L, doc.y, { width: W });
+             .text(`       Note (Original): ${originalInstruction}`, L, doc.y, { width: W });
+        }
+
+        Object.entries(translatedInstructions).forEach(([code, text]) => {
+          const label = LANGUAGE_MAP[code] || code.toUpperCase();
+          doc.fontSize(8.5).font('Helvetica-Oblique').fillColor('#0369a1')
+            .text(`       ${label}: ${text}`, L, doc.y, { width: W });
+        });
+
+        if (!originalInstruction && Object.keys(translatedInstructions).length > 0) {
+          doc.fillColor('#000');
         }
 
         // reset color
@@ -341,8 +452,9 @@ exports.generateBill = async (req, res) => {
       doc.moveDown(0.4);
     });
 
-    // Totals
-    const gst = subtotal * 0.18;
+    // Totals: use configurable tax rate when available; default to 0 to avoid incorrect hard-coded taxation.
+    const taxRate = Number(settings?.billTaxRate || 0);
+    const gst = subtotal * (taxRate / 100);
     const total = subtotal + gst;
 
     doc.moveDown(0.3);
@@ -351,7 +463,7 @@ exports.generateBill = async (req, res) => {
 
     const totals = [
       ['Subtotal', fmtMoney(subtotal, currency)],
-      ['GST (18%)', fmtMoney(gst, currency)],
+      [`Tax (${taxRate}%)`, fmtMoney(gst, currency)],
     ];
     totals.forEach(([label, val]) => {
       const ty = doc.y;
@@ -455,6 +567,7 @@ exports.generateLabReport = async (req, res) => {
       ],
     });
     if (!labTest) return res.status(404).json({ message: 'Lab test not found' });
+    if (!(await ensureLabReportAccess(req, res, labTest))) return;
 
     const hospital = labTest.lab?.hospital;
     if (!hospital) return res.status(400).json({ message: 'Hospital not found for lab test' });
@@ -567,6 +680,322 @@ exports.generateLabReport = async (req, res) => {
     doc.end();
   } catch (err) {
     console.error('Lab report PDF error:', err);
+    if (!res.headersSent) res.status(500).json({ message: err.message });
+  }
+};
+
+// ─── 5. Medicine Invoice PDF ─────────────────────────────────────────────────
+exports.generateMedicineInvoice = async (req, res) => {
+  try {
+    const invoice = await MedicineInvoice.findByPk(req.params.invoiceId, {
+      include: [
+        { model: Hospital, as: 'hospital' },
+        { model: Patient, as: 'patient' },
+        { model: User, as: 'soldBy', attributes: ['id', 'name', 'email'] },
+        {
+          model: MedicineInvoiceItem,
+          as: 'items',
+          include: [{ model: Medication, as: 'medication' }],
+        },
+      ],
+    });
+
+    if (!invoice) return res.status(404).json({ message: 'Medicine invoice not found' });
+    if (!(await ensureMedicineInvoiceAccess(req, res, invoice))) return;
+    if (!invoice.hospital) return res.status(400).json({ message: 'Hospital not found for invoice' });
+
+    const settings = await getSettings(invoice.hospital.id);
+    const currency = settings.currency || '₹';
+
+    const doc = initDoc(res, `medicine-invoice-${invoice.invoiceNumber || invoice.id}.pdf`);
+    drawHeader(doc, invoice.hospital, settings);
+
+    doc.fontSize(13).font('Helvetica-Bold').text('PHARMACY INVOICE', { align: 'center' });
+    doc.moveDown(0.3);
+    drawHRule(doc);
+    doc.moveDown(0.5);
+
+    const soldBy = invoice.soldBy?.name || '—';
+    const metaRows = [
+      ['Invoice No:', invoice.invoiceNumber || '—', 'Date:', fmtDate(invoice.invoiceDate)],
+      ['Patient:', invoice.patient?.name || 'Walk-in Customer', 'Patient ID:', invoice.patient?.patientId || '—'],
+      ['Phone:', invoice.patient?.phone || '—', 'Sold By:', soldBy],
+      ['Payment:', invoice.isPaid ? '✓ Paid' : '⬜ Unpaid', 'Mode:', (invoice.paymentMode || 'cash').replace(/_/g, ' ')],
+    ];
+
+    doc.fontSize(9);
+    metaRows.forEach(([l1, v1, l2, v2]) => {
+      doc.font('Helvetica-Bold').text(l1, 50, doc.y, { width: 80, continued: true })
+         .font('Helvetica').text(v1, { width: 160, continued: true })
+         .font('Helvetica-Bold').text(l2, { width: 85, continued: true })
+         .font('Helvetica').text(v2, { width: 160 });
+    });
+
+    doc.moveDown(0.5);
+    drawHRule(doc);
+    doc.moveDown(0.5);
+
+    // cols: Medicine | HSN | Qty | Unit | Disc | Tax | Amount
+    const cols = [155, 45, 50, 65, 45, 45, 60];
+    const colX = cols.reduce((acc, w, i) => { acc.push((acc[i - 1] || 50) + (i > 0 ? cols[i - 1] : 0)); return acc; }, [50]);
+    const headY = doc.y;
+    doc.font('Helvetica-Bold').fontSize(9);
+    doc.text('Medicine', colX[0], headY, { width: cols[0] });
+    doc.text('HSN', colX[1], headY, { width: cols[1] });
+    doc.text('Qty', colX[2], headY, { width: cols[2], align: 'right' });
+    doc.text('Unit', colX[3], headY, { width: cols[3], align: 'right' });
+    doc.text('Disc', colX[4], headY, { width: cols[4], align: 'right' });
+    doc.text('GST%', colX[5], headY, { width: cols[5], align: 'right' });
+    doc.text('Amount', colX[6], headY, { width: cols[6], align: 'right' });
+    doc.moveDown(0.2);
+    drawHRule(doc);
+    doc.moveDown(0.3);
+
+    (invoice.items || []).forEach((item) => {
+      const y = doc.y;
+      const med = item.medication;
+      const medName = med?.name || 'Medicine';
+      const hsnCode = med?.hsnCode || '—';
+      doc.font('Helvetica').fontSize(9);
+      doc.text(medName, colX[0], y, { width: cols[0] });
+      doc.font('Helvetica').fontSize(8).fillColor('#475569')
+         .text(hsnCode, colX[1], y + 1, { width: cols[1] });
+      doc.fillColor('#000').fontSize(9);
+      doc.text(String(item.quantity || 0), colX[2], y, { width: cols[2], align: 'right' });
+      doc.text(fmtMoney(item.unitPrice, currency), colX[3], y, { width: cols[3], align: 'right' });
+      doc.text(`${Number(item.discountPct || 0).toFixed(1)}%`, colX[4], y, { width: cols[4], align: 'right' });
+      doc.text(`${Number(item.taxPct || 0).toFixed(1)}%`, colX[5], y, { width: cols[5], align: 'right' });
+      doc.text(fmtMoney(item.lineTotal, currency), colX[6], y, { width: cols[6], align: 'right' });
+      doc.moveDown(0.4);
+    });
+
+    doc.moveDown(0.3);
+    drawHRule(doc);
+    doc.moveDown(0.3);
+
+    const sumRows = [
+      ['Subtotal', invoice.subtotal],
+      ['Discount', invoice.discountAmount],
+      ['Tax', invoice.taxAmount],
+    ];
+    sumRows.forEach(([label, value]) => {
+      const y = doc.y;
+      doc.fontSize(9).font('Helvetica').text(label, colX[3], y, { width: cols[3] + cols[4] + cols[5], align: 'right' });
+      doc.text(fmtMoney(value, currency), colX[6], y, { width: cols[6], align: 'right' });
+      doc.moveDown(0.25);
+    });
+
+    drawHRule(doc);
+    doc.moveDown(0.2);
+    const tY = doc.y;
+    doc.fontSize(11).font('Helvetica-Bold').text('TOTAL', colX[3], tY, { width: cols[3] + cols[4] + cols[5], align: 'right' });
+    doc.text(fmtMoney(invoice.totalAmount, currency), colX[6], tY, { width: cols[6], align: 'right' });
+
+    if (invoice.notes) {
+      doc.moveDown(0.8);
+      doc.fontSize(9).font('Helvetica-Bold').text('Notes:', 50, doc.y, { width: 495 });
+      doc.font('Helvetica').text(invoice.notes, 50, doc.y, { width: 495 });
+    }
+
+    drawFooter(doc, settings, false);
+    doc.end();
+  } catch (err) {
+    console.error('Medicine invoice PDF error:', err);
+    if (!res.headersSent) res.status(500).json({ message: err.message });
+  }
+};
+
+// 6. Medicine Return Note (Credit Note)
+exports.generateMedicineReturnNote = async (req, res) => {
+  try {
+    const ret = await MedicineInvoiceReturn.findByPk(req.params.returnId, {
+      include: [
+        {
+          model: MedicineInvoice,
+          as: 'invoice',
+          include: [
+            { model: Hospital, as: 'hospital' },
+            { model: Patient, as: 'patient' },
+          ],
+        },
+        { model: User, as: 'createdBy', attributes: ['id', 'name', 'email'] },
+        {
+          model: MedicineInvoiceReturnItem,
+          as: 'items',
+          include: [{ model: Medication, as: 'medication' }],
+        },
+      ],
+    });
+    if (!ret) return res.status(404).json({ message: 'Medicine return not found' });
+    if (!ret.invoice?.hospital) return res.status(400).json({ message: 'Hospital not found for return' });
+
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+    if (!isSuperAdmin(req.user) && ret.hospitalId !== scope.hospitalId) {
+      return res.status(403).json({ message: 'Access denied for this hospital return note' });
+    }
+
+    const settings = await getSettings(ret.invoice.hospital.id);
+    const currency = settings.currency || 'Rs ';
+    const doc = initDoc(res, `medicine-return-${ret.returnNumber || ret.id}.pdf`);
+    drawHeader(doc, ret.invoice.hospital, settings);
+
+    doc.fontSize(13).font('Helvetica-Bold').text('CREDIT NOTE - MEDICINE RETURN', { align: 'center' });
+    doc.moveDown(0.3);
+    drawHRule(doc);
+    doc.moveDown(0.5);
+
+    const metaRows = [
+      ['Return No:', ret.returnNumber || '-', 'Date:', fmtDate(ret.returnDate)],
+      ['Invoice No:', ret.invoice?.invoiceNumber || '-', 'Invoice Date:', fmtDate(ret.invoice?.invoiceDate)],
+      ['Patient:', ret.invoice?.patient?.name || 'Walk-in', 'Patient ID:', ret.invoice?.patient?.patientId || '-'],
+      ['Reason:', ret.reason || '-', 'Created By:', ret.createdBy?.name || '-'],
+    ];
+    doc.fontSize(9);
+    metaRows.forEach(([l1, v1, l2, v2]) => {
+      doc.font('Helvetica-Bold').text(l1, 50, doc.y, { width: 90, continued: true })
+         .font('Helvetica').text(v1, { width: 150, continued: true })
+         .font('Helvetica-Bold').text(l2, { width: 95, continued: true })
+         .font('Helvetica').text(v2, { width: 160 });
+    });
+
+    doc.moveDown(0.4);
+    drawHRule(doc);
+    doc.moveDown(0.4);
+
+    const cols = [230, 60, 70, 60, 75];
+    const x = [50, 280, 340, 410, 470];
+    const hy = doc.y;
+    doc.fontSize(9).font('Helvetica-Bold');
+    doc.text('Medicine', x[0], hy, { width: cols[0] });
+    doc.text('Qty', x[1], hy, { width: cols[1], align: 'right' });
+    doc.text('Unit', x[2], hy, { width: cols[2], align: 'right' });
+    doc.text('Tax', x[3], hy, { width: cols[3], align: 'right' });
+    doc.text('Amount', x[4], hy, { width: cols[4], align: 'right' });
+    doc.moveDown(0.2);
+    drawHRule(doc);
+    doc.moveDown(0.3);
+
+    (ret.items || []).forEach((it) => {
+      const y = doc.y;
+      doc.font('Helvetica').fontSize(9);
+      doc.text(it.medication?.name || 'Medicine', x[0], y, { width: cols[0] });
+      doc.text(String(it.quantity || 0), x[1], y, { width: cols[1], align: 'right' });
+      doc.text(fmtMoney(it.unitPrice, currency), x[2], y, { width: cols[2], align: 'right' });
+      doc.text(fmtMoney(it.lineTax, currency), x[3], y, { width: cols[3], align: 'right' });
+      doc.text(fmtMoney(it.lineTotal, currency), x[4], y, { width: cols[4], align: 'right' });
+      doc.moveDown(0.35);
+    });
+
+    doc.moveDown(0.3);
+    drawHRule(doc);
+    doc.moveDown(0.25);
+    doc.fontSize(9).font('Helvetica').text('Subtotal', x[3] - 40, doc.y, { width: 100, align: 'right' });
+    doc.text(fmtMoney(ret.subtotal, currency), x[4], doc.y, { width: cols[4], align: 'right' });
+    doc.moveDown(0.25);
+    doc.fontSize(9).font('Helvetica').text('Tax', x[3] - 40, doc.y, { width: 100, align: 'right' });
+    doc.text(fmtMoney(ret.taxAmount, currency), x[4], doc.y, { width: cols[4], align: 'right' });
+    doc.moveDown(0.25);
+    drawHRule(doc);
+    doc.moveDown(0.2);
+    doc.fontSize(11).font('Helvetica-Bold').text('TOTAL CREDIT', x[3] - 60, doc.y, { width: 120, align: 'right' });
+    doc.text(fmtMoney(ret.totalAmount, currency), x[4], doc.y, { width: cols[4], align: 'right' });
+
+    if (ret.notes) {
+      doc.moveDown(0.8);
+      doc.fontSize(9).font('Helvetica-Bold').text('Notes:', 50, doc.y, { width: 495 });
+      doc.font('Helvetica').text(ret.notes, 50, doc.y, { width: 495 });
+    }
+
+    drawFooter(doc, settings, false);
+    doc.end();
+  } catch (err) {
+    console.error('Medicine return PDF error:', err);
+    if (!res.headersSent) res.status(500).json({ message: err.message });
+  }
+};
+
+// 7. Purchase Return Note (Debit Note)
+exports.generatePurchaseReturnNote = async (req, res) => {
+  try {
+    const ret = await StockPurchaseReturn.findByPk(req.params.returnId, {
+      include: [
+        {
+          model: StockPurchase,
+          as: 'purchase',
+          include: [
+            { model: Hospital, as: 'hospital' },
+            { model: Medication, as: 'medication' },
+            { model: Vendor, as: 'vendor' },
+          ],
+        },
+        { model: Medication, as: 'medication' },
+        { model: Vendor, as: 'vendor' },
+        { model: User, as: 'createdBy', attributes: ['id', 'name', 'email'] },
+      ],
+    });
+    if (!ret) return res.status(404).json({ message: 'Purchase return not found' });
+    if (!ret.purchase?.hospital) return res.status(400).json({ message: 'Hospital not found for purchase return' });
+
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+    if (!isSuperAdmin(req.user) && ret.hospitalId !== scope.hospitalId) {
+      return res.status(403).json({ message: 'Access denied for this hospital return note' });
+    }
+
+    const settings = await getSettings(ret.purchase.hospital.id);
+    const currency = settings.currency || 'Rs ';
+    const doc = initDoc(res, `purchase-return-${ret.returnNumber || ret.id}.pdf`);
+    drawHeader(doc, ret.purchase.hospital, settings);
+
+    doc.fontSize(13).font('Helvetica-Bold').text('DEBIT NOTE - PURCHASE RETURN', { align: 'center' });
+    doc.moveDown(0.3);
+    drawHRule(doc);
+    doc.moveDown(0.5);
+
+    const metaRows = [
+      ['Return No:', ret.returnNumber || '-', 'Date:', fmtDate(ret.returnDate)],
+      ['Purchase Invoice:', ret.purchase?.invoiceNumber || '-', 'Purchase Date:', fmtDate(ret.purchase?.purchaseDate)],
+      ['Vendor:', ret.vendor?.name || ret.purchase?.vendor?.name || '-', 'Medication:', ret.medication?.name || ret.purchase?.medication?.name || '-'],
+      ['Reason:', ret.reason || '-', 'Created By:', ret.createdBy?.name || '-'],
+    ];
+    doc.fontSize(9);
+    metaRows.forEach(([l1, v1, l2, v2]) => {
+      doc.font('Helvetica-Bold').text(l1, 50, doc.y, { width: 95, continued: true })
+         .font('Helvetica').text(v1, { width: 145, continued: true })
+         .font('Helvetica-Bold').text(l2, { width: 100, continued: true })
+         .font('Helvetica').text(v2, { width: 155 });
+    });
+
+    doc.moveDown(0.4);
+    drawHRule(doc);
+    doc.moveDown(0.5);
+
+    doc.fontSize(10).font('Helvetica-Bold').text('Return Summary');
+    doc.moveDown(0.3);
+    const infoRows = [
+      ['Quantity Returned', String(ret.quantity || 0)],
+      ['Unit Cost', fmtMoney(ret.unitCost, currency)],
+      ['Tax %', `${Number(ret.taxPct || 0).toFixed(2)}%`],
+      ['Taxable Value', fmtMoney(ret.taxableAmount, currency)],
+      ['Tax Amount', fmtMoney(ret.taxAmount, currency)],
+      ['Total Debit', fmtMoney(ret.totalAmount, currency)],
+    ];
+    infoRows.forEach(([label, value]) => {
+      doc.fontSize(9).font('Helvetica-Bold').text(`${label}: `, 50, doc.y, { width: 150, continued: true })
+        .font('Helvetica').text(value, { width: 200 });
+    });
+
+    if (ret.notes) {
+      doc.moveDown(0.6);
+      doc.fontSize(9).font('Helvetica-Bold').text('Notes:', 50, doc.y, { width: 495 });
+      doc.font('Helvetica').text(ret.notes, 50, doc.y, { width: 495 });
+    }
+
+    drawFooter(doc, settings, false);
+    doc.end();
+  } catch (err) {
+    console.error('Purchase return PDF error:', err);
     if (!res.headersSent) res.status(500).json({ message: err.message });
   }
 };

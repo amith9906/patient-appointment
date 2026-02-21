@@ -13,7 +13,7 @@ export default function DoctorPatients() {
   }, []);
 
   const filtered = patients.filter(p =>
-    !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.patientId?.includes(search)
+    !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.patientId.includes(search)
   );
 
   return (
@@ -39,17 +39,17 @@ export default function DoctorPatients() {
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs text-gray-500">
-                <span>🩸 {p.bloodGroup || '—'}</span>
-                <span>📱 {p.phone || '—'}</span>
-                <span>⚥ {p.gender || '—'}</span>
-                <span>🎂 {p.dateOfBirth || '—'}</span>
+                <span>Blood: {p.bloodGroup || '-'}</span>
+                <span>Phone: {p.phone || '-'}</span>
+                <span>Gender: {p.gender || '-'}</span>
+                <span>DOB: {p.dateOfBirth || '-'}</span>
               </div>
-              {p.allergies && <div className="mt-2 text-xs bg-yellow-50 text-yellow-700 px-2 py-1 rounded">⚠️ {p.allergies.slice(0,50)}</div>}
+              {p.allergies && <div className="mt-2 text-xs bg-yellow-50 text-yellow-700 px-2 py-1 rounded">Warning: {p.allergies.slice(0,50)}</div>}
             </div>
           ))}
           {filtered.length === 0 && (
             <div className="col-span-2 text-center py-16 text-gray-400">
-              <div className="text-5xl mb-3">🧑‍🤝‍🧑</div>
+              <div className="text-5xl mb-3">Patients</div>
               <p>No patients found</p>
             </div>
           )}

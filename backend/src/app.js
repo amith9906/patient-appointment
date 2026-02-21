@@ -39,6 +39,12 @@ app.use('/api/users', require('./routes/users'));
 app.use('/api/prescriptions', require('./routes/prescriptions'));
 app.use('/api/pdf', require('./routes/pdf'));
 app.use('/api/bulk', require('./routes/bulk'));
+app.use('/api/expenses', require('./routes/expenses'));
+app.use('/api/medicine-invoices', require('./routes/medicineInvoices'));
+app.use('/api/vendors', require('./routes/vendors'));
+app.use('/api/stock-purchases', require('./routes/stockPurchases'));
+app.use('/api/corporates', require('./routes/corporates'));
+app.use('/api/packages', require('./routes/packages'));
 
 // Health check
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));

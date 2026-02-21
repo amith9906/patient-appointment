@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../services/api';
 import { toast } from 'react-toastify';
+import SearchableSelect from '../../components/SearchableSelect';
 
 export default function LabUpload() {
   const [patients, setPatients] = useState([]);
@@ -35,11 +36,15 @@ export default function LabUpload() {
         <form onSubmit={handleUpload} className="space-y-5">
           <div>
             <label className="text-sm font-medium text-gray-700 block mb-1">Patient *</label>
-            <select required value={form.patientId} onChange={e => setForm(f => ({...f, patientId: e.target.value}))}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
-              <option value="">Select Patient</option>
-              {patients.map(p => <option key={p.id} value={p.id}>{p.name} ({p.patientId})</option>)}
-            </select>
+            <SearchableSelect
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+              value={form.patientId}
+              onChange={(value) => setForm((f) => ({ ...f, patientId: value }))}
+              options={patients.map((p) => ({ value: p.id, label: `${p.name} (${p.patientId})` }))}
+              placeholder="Search patient..."
+              emptyLabel="Select Patient"
+              required
+            />
           </div>
           <div>
             <label className="text-sm font-medium text-gray-700 block mb-1">Report Title *</label>
@@ -65,13 +70,13 @@ export default function LabUpload() {
               <div className="text-3xl mb-2">📁</div>
               <input id="fileInput" type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xlsx,.csv"
                 onChange={e => setForm(f => ({...f, file: e.target.files[0]}))} required className="text-sm" />
-              <p className="text-xs text-gray-400 mt-2">PDF, JPG, PNG, DOC, XLSX · Max 10MB</p>
+              <p className="text-xs text-gray-400 mt-2">PDF, JPG, PNG, DOC, XLSX  |  Max 10MB</p>
               {form.file && <p className="text-xs text-blue-600 mt-2 font-medium">{form.file.name}</p>}
             </div>
           </div>
           <button type="submit" disabled={uploading}
             className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 disabled:opacity-50 transition-colors">
-            {uploading ? '⏳ Uploading...' : '⬆️ Upload Report'}
+            {uploading ? 'Pending Uploading...' : '⬆️ Upload Report'}
           </button>
         </form>
       </div>

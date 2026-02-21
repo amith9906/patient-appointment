@@ -6,11 +6,21 @@ import { startOfWeek, endOfWeek, format } from 'date-fns';
 
 const STATUS_COLORS = {
   scheduled:   'bg-blue-100 text-blue-700',
+  postponed:   'bg-orange-100 text-orange-700',
   confirmed:   'bg-green-100 text-green-700',
   in_progress: 'bg-yellow-100 text-yellow-700',
   completed:   'bg-gray-100 text-gray-600',
   cancelled:   'bg-red-100 text-red-600',
   no_show:     'bg-orange-100 text-orange-600',
+};
+const STATUS_LABEL = {
+  scheduled: 'Scheduled',
+  postponed: 'Postponed',
+  confirmed: 'Confirmed',
+  in_progress: 'In Progress',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+  no_show: 'Skipped',
 };
 
 export default function DoctorAppointments() {
@@ -70,13 +80,13 @@ export default function DoctorAppointments() {
 
         {/* List / Calendar toggle */}
         <div style={{ display: 'flex', border: '1px solid #d1d5db', borderRadius: 8, overflow: 'hidden' }}>
-          {[['list', '☰ List'], ['calendar', '📅 Calendar']].map(([v, label]) => (
+          {[['list', 'List List'], ['calendar', 'Calendar Calendar']].map(([v, label]) => (
             <button key={v} onClick={() => setViewMode(v)}
               style={{
                 padding: '6px 16px', fontSize: 13, fontWeight: 500,
                 border: 'none', cursor: 'pointer',
-                background: viewMode === v ? '#0d9488' : '#fff',
-                color: viewMode === v ? '#fff' : '#4b5563',
+                background:viewMode === v ? '#0d9488' : '#fff',
+                color:viewMode === v ? '#fff' : '#4b5563',
                 transition: 'background 0.15s',
               }}>
               {label}
@@ -91,11 +101,11 @@ export default function DoctorAppointments() {
           <div className="flex flex-wrap gap-2 mb-5">
             <input type="date" value={dateFilter} onChange={e => setDateFilter(e.target.value)}
               className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-teal-500" />
-            {['all','scheduled','confirmed','in_progress','completed'].map(s => (
+            {['all','scheduled','postponed','confirmed','in_progress','completed'].map(s => (
               <button key={s} onClick={() => setFilter(s)}
                 className={`px-3 py-1.5 text-sm rounded-lg font-medium transition-colors
                   ${filter === s ? 'bg-teal-600 text-white' : 'bg-white border border-gray-200 text-gray-600'}`}>
-                {s === 'all' ? 'All' : s.replace('_',' ')}
+                {s === 'all' ? 'All' : (STATUS_LABEL[s] || s)}
               </button>
             ))}
             <button onClick={() => { setFilter('all'); setDateFilter(''); }} className="text-xs text-gray-400 px-2">Clear</button>
@@ -107,7 +117,7 @@ export default function DoctorAppointments() {
             </div>
           ) : appointments.length === 0 ? (
             <div className="bg-white rounded-xl p-16 text-center border border-gray-100">
-              <div className="text-5xl mb-3">📅</div>
+              <div className="text-5xl mb-3">Calendar</div>
               <p className="text-gray-500">No appointments found</p>
             </div>
           ) : (
@@ -119,17 +129,17 @@ export default function DoctorAppointments() {
                       <div className="text-center bg-teal-50 rounded-xl p-3 min-w-[60px]">
                         <div className="text-xs text-teal-400">{new Date(a.appointmentDate).toLocaleDateString('en',{month:'short'})}</div>
                         <div className="text-xl font-bold text-teal-700">{new Date(a.appointmentDate).getDate()}</div>
-                        <div className="text-xs font-bold text-teal-500">{a.appointmentTime?.slice(0,5)}</div>
+                        <div className="text-xs font-bold text-teal-500">{a.appointmentTime.slice(0,5)}</div>
                       </div>
                       <div>
-                        <div className="font-semibold text-gray-800 text-lg">{a.patient?.name}</div>
-                        <div className="text-sm text-gray-500">{a.patient?.patientId} · {a.type?.replace('_',' ')}</div>
-                        {a.reason && <div className="text-sm text-gray-600 mt-1">📝 {a.reason}</div>}
+                        <div className="font-semibold text-gray-800 text-lg">{a.patient.name}</div>
+                        <div className="text-sm text-gray-500">{a.patient.patientId}  |  {a.type.replace('_',' ')}</div>
+                        {a.reason && <div className="text-sm text-gray-600 mt-1">Note {a.reason}</div>}
                       </div>
                     </div>
                     <div className="flex flex-col items-end gap-2">
                       <span className={`text-xs px-2 py-1 rounded-full font-semibold ${STATUS_COLORS[a.status] || ''}`}>
-                        {a.status?.replace('_',' ')}
+                        {STATUS_LABEL[a.status] || a.status}
                       </span>
                     </div>
                   </div>
@@ -138,7 +148,7 @@ export default function DoctorAppointments() {
                       className="flex-1 text-center text-sm bg-teal-50 text-teal-700 hover:bg-teal-100 py-2 rounded-lg font-medium transition-colors">
                       {a.status === 'confirmed' ? 'Start Consultation' : a.status === 'in_progress' ? 'Continue Consultation' : 'View Details'}
                     </Link>
-                    {a.status === 'scheduled' && (
+                    {['scheduled', 'postponed'].includes(a.status) && (
                       <button onClick={() => handleStatus(a.id,'confirmed')}
                         className="px-4 text-sm bg-green-50 text-green-700 hover:bg-green-100 rounded-lg font-medium">
                         Confirm

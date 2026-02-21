@@ -2,6 +2,7 @@ import React from 'react';
 
 const colors = {
   scheduled: { bg: '#dbeafe', color: '#1d4ed8' },
+  postponed: { bg: '#ffedd5', color: '#c2410c' },
   confirmed: { bg: '#dcfce7', color: '#15803d' },
   completed: { bg: '#d1fae5', color: '#065f46' },
   cancelled: { bg: '#fee2e2', color: '#b91c1c' },
@@ -17,7 +18,7 @@ const colors = {
 };
 
 export default function Badge({ text, type }) {
-  const style = colors[type] || colors[type?.toLowerCase()] || colors.default;
+  const style = colors[type] || colors[type.toLowerCase()] || colors.default;
   return (
     <span style={{
       background: style.bg,

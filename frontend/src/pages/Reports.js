@@ -3,6 +3,7 @@ import { patientAPI, reportAPI } from '../services/api';
 import Modal from '../components/Modal';
 import Table from '../components/Table';
 import Badge from '../components/Badge';
+import SearchableSelect from '../components/SearchableSelect';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
 
@@ -54,7 +55,7 @@ export default function Reports() {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Delete this report?')) return;
+    if (!window.confirm('Delete this report')) return;
     try { await reportAPI.delete(id); toast.success('Report deleted'); loadReports(selectedPatient); }
     catch { toast.error('Error'); }
   };
@@ -62,13 +63,13 @@ export default function Reports() {
   const columns = [
     { key: 'title', label: 'Title', render: (v, r) => <div><div style={{ fontWeight: 600 }}>{v}</div><div style={{ fontSize: 12, color: '#64748b' }}>{r.originalName}</div></div> },
     { key: 'type', label: 'Type', render: (v) => <Badge text={v.replace(/_/g, ' ')} type="default" /> },
-    { key: 'fileSize', label: 'Size', render: (v) => v ? `${(v / 1024).toFixed(1)} KB` : '—' },
-    { key: 'mimeType', label: 'Format', render: (v) => v?.split('/')[1]?.toUpperCase() || '—' },
+    { key: 'fileSize', label: 'Size', render: (v) => v ? `${(v / 1024).toFixed(1)} KB` : '-' },
+    { key: 'mimeType', label: 'Format', render: (v) => v.split('/')[1].toUpperCase() || '-' },
     { key: 'uploadedBy', label: 'Uploaded By' },
     { key: 'createdAt', label: 'Date', render: (v) => new Date(v).toLocaleDateString() },
     { key: 'id', label: 'Actions', render: (_, r) => (
       <div className={styles.actions}>
-        <button className={styles.btnEdit} onClick={() => handleDownload(r)}>⬇ Download</button>
+        <button className={styles.btnEdit} onClick={() => handleDownload(r)}>Download</button>
         <button className={styles.btnDelete} onClick={() => handleDelete(r.id)}>Delete</button>
       </div>
     )},
@@ -82,15 +83,20 @@ export default function Reports() {
       </div>
 
       <div className={styles.filterBar}>
-        <select className={styles.filterSelect} style={{ flex: 1 }} value={selectedPatient} onChange={(e) => handlePatientChange(e.target.value)}>
-          <option value="">-- Select a Patient to view reports --</option>
-          {patients.map(p => <option key={p.id} value={p.id}>{p.name} ({p.patientId})</option>)}
-        </select>
+        <SearchableSelect
+          className={styles.filterSelect}
+          style={{ flex: 1 }}
+          value={selectedPatient}
+          onChange={handlePatientChange}
+          options={patients.map((p) => ({ value: p.id, label: `${p.name} (${p.patientId})` }))}
+          placeholder="Search patient..."
+          emptyLabel="-- Select a Patient to view reports --"
+        />
       </div>
 
       {!selectedPatient ? (
         <div className={styles.card} style={{ padding: 60, textAlign: 'center', color: '#94a3b8' }}>
-          <div style={{ fontSize: 48, marginBottom: 12 }}>📋</div>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>Report</div>
           <div style={{ fontSize: 16, fontWeight: 600 }}>Select a patient to view their reports</div>
         </div>
       ) : (
@@ -121,7 +127,7 @@ export default function Reports() {
           </div>
           <div className={styles.formActions}>
             <button type="button" className={styles.btnSecondary} onClick={() => setUploadModal(false)}>Cancel</button>
-            <button type="submit" className={styles.btnPrimary} disabled={uploading}>{uploading ? '⏳ Uploading...' : '⬆ Upload Report'}</button>
+            <button type="submit" className={styles.btnPrimary} disabled={uploading}>{uploading ? 'Uploading...' : 'Upload Report'}</button>
           </div>
         </form>
       </Modal>

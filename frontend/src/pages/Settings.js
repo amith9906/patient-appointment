@@ -7,7 +7,7 @@ const DEFAULT = {
   phone: '', altPhone: '', website: '',
   doctorName: '', doctorQualification: '', doctorRegNumber: '', doctorSpecialization: '',
   receiptHeader: '', receiptFooter: 'Thank you for choosing our hospital. Get well soon!',
-  currency: '₹', dateFormat: 'DD/MM/YYYY', timezone: 'Asia/Kolkata',
+  currency: 'Rs ', dateFormat: 'DD/MM/YYYY', timezone: 'Asia/Kolkata',
   showLogoOnReceipt: true, showGSTINOnReceipt: true, showDoctorOnReceipt: true,
   appointmentSlotDuration: 30, workingHoursFrom: '09:00', workingHoursTo: '18:00',
 };
@@ -43,7 +43,7 @@ export default function Settings() {
       await hospitalSettingsAPI.update(selectedHospital.id, settings);
       toast.success(`Settings saved for ${selectedHospital.name}`);
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to save settings');
+      toast.error(err.response.data.message || 'Failed to save settings');
     } finally {
       setSaving(false);
     }
@@ -60,7 +60,7 @@ export default function Settings() {
   );
 
   const tabs = [
-    { id: 'hospital', label: '🏥 Hospital Info' },
+    { id: 'hospital', label: 'Hospital Hospital Info' },
     { id: 'doctor', label: '👨‍⚕️ Doctor Info' },
     { id: 'receipt', label: '🧾 Receipt / PDF' },
     { id: 'system', label: '⚙️ System' },
@@ -101,15 +101,15 @@ export default function Settings() {
             <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
               Editing: {selectedHospital.name}
             </span>
-            {selectedHospital.city && <span>· {selectedHospital.city}</span>}
-            {selectedHospital.type && <span>· {selectedHospital.type}</span>}
+            {selectedHospital.city && <span> |  {selectedHospital.city}</span>}
+            {selectedHospital.type && <span> |  {selectedHospital.type}</span>}
           </div>
         )}
       </div>
 
       {!selectedHospital ? (
         <div className="bg-white rounded-2xl border-2 border-dashed border-gray-200 p-16 text-center text-gray-400">
-          <div className="text-5xl mb-4">🏥</div>
+          <div className="text-5xl mb-4">Hospital</div>
           <div className="text-base font-medium">Select a hospital above to configure its settings</div>
           <div className="text-sm mt-2">Each clinic has its own GSTIN, PDF template, receipt footer and doctor signatory</div>
         </div>
@@ -137,7 +137,7 @@ export default function Settings() {
                 </div>
                 <div className="flex flex-col gap-1 col-span-2">
                   <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Hospital Name (read-only)</label>
-                  <input disabled value={selectedHospital?.name || ''} className="border border-gray-100 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-500 cursor-not-allowed" />
+                  <input disabled value={selectedHospital.name || ''} className="border border-gray-100 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-500 cursor-not-allowed" />
                 </div>
                 <Field label="Tagline / Motto" k="tagline" placeholder="Your health, our priority" span />
                 <Field label="GSTIN" k="gstin" placeholder="27AABCU9603R1ZX" />
@@ -152,7 +152,7 @@ export default function Settings() {
             {activeTab === 'doctor' && (
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2 bg-blue-50 rounded-xl p-4 text-sm text-blue-700">
-                  ℹ️ This doctor appears as the default signatory on prescriptions and receipts for <strong>{selectedHospital?.name}</strong>.
+                  ℹ️ This doctor appears as the default signatory on prescriptions and receipts for <strong>{selectedHospital.name}</strong>.
                 </div>
                 <Field label="Default Doctor Name" k="doctorName" placeholder="Dr. Priya Sharma" />
                 <Field label="Qualification" k="doctorQualification" placeholder="MBBS, MD (Medicine)" />
@@ -168,7 +168,7 @@ export default function Settings() {
                     <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Currency Symbol</label>
                     <select value={settings.currency} onChange={e => set('currency', e.target.value)}
                       className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
-                      <option value="₹">₹ Indian Rupee (INR)</option>
+                      <option value="Rs ">Rs  Indian Rupee (INR)</option>
                       <option value="$">$ US Dollar (USD)</option>
                       <option value="€">€ Euro (EUR)</option>
                       <option value="£">£ British Pound (GBP)</option>
@@ -219,7 +219,7 @@ export default function Settings() {
                       <div className="text-base font-bold">{hospitalName}</div>
                       {settings.tagline && <div className="text-xs text-gray-500 italic">{settings.tagline}</div>}
                       {hospitalAddr && <div className="text-xs mt-1">{hospitalAddr}</div>}
-                      <div className="text-xs">{settings.phone || selectedHospital?.phone || ''}</div>
+                      <div className="text-xs">{settings.phone || selectedHospital.phone || ''}</div>
                       {settings.showGSTINOnReceipt && settings.gstin && (
                         <div className="text-xs mt-1">GSTIN: {settings.gstin}{settings.pan ? ` | PAN: ${settings.pan}` : ''}</div>
                       )}

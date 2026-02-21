@@ -4,10 +4,17 @@ import { patientAPI, hospitalAPI, bulkAPI } from '../services/api';
 import Modal from '../components/Modal';
 import Table from '../components/Table';
 import Badge from '../components/Badge';
+import SearchableSelect from '../components/SearchableSelect';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
 
-const INIT = { name: '', dateOfBirth: '', gender: 'male', bloodGroup: '', phone: '', email: '', address: '', city: '', state: '', emergencyContactName: '', emergencyContactPhone: '', allergies: '', medicalHistory: '', insuranceProvider: '', insuranceNumber: '', hospitalId: '' };
+const INIT = {
+  name: '', dateOfBirth: '', gender: 'male', bloodGroup: '', phone: '', email: '', address: '', city: '', state: '',
+  emergencyContactName: '', emergencyContactPhone: '', allergies: '', medicalHistory: '', insuranceProvider: '', insuranceNumber: '',
+  referralSource: '', referralDetail: '', hospitalId: '', chronicConditions: [], clinicalAlerts: [],
+};
+const CHRONIC_CONDITIONS = ['Diabetes', 'Hypertension', 'Asthma', 'COPD', 'CKD', 'Thyroid Disorder', 'Cardiac Disease', 'Epilepsy'];
+const CLINICAL_ALERTS = ['High-risk Pregnancy', 'Bleeding Risk', 'Fall Risk', 'Drug Allergy Risk', 'Immunocompromised', 'Requires Isolation'];
 
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -51,7 +58,15 @@ export default function Patients() {
   }, [modal, editing, form.hospitalId, hospitals]);
 
   const openCreate = () => { setEditing(null); setForm({ ...INIT, hospitalId: getDefaultHospitalId() }); setModal(true); };
-  const openEdit = (p) => { setEditing(p); setForm({ ...p }); setModal(true); };
+  const openEdit = (p) => {
+    setEditing(p);
+    setForm({
+      ...p,
+      chronicConditions: Array.isArray(p.chronicConditions) ? p.chronicConditions : [],
+      clinicalAlerts: Array.isArray(p.clinicalAlerts) ? p.clinicalAlerts : [],
+    });
+    setModal(true);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -59,7 +74,7 @@ export default function Patients() {
       if (editing) { await patientAPI.update(editing.id, form); toast.success('Patient updated'); }
       else { await patientAPI.create(form); toast.success('Patient registered'); }
       setModal(false); load();
-    } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
+    } catch (err) { toast.error(err.response.data.message || 'Error'); }
   };
 
   const handleDownloadTemplate = async () => {
@@ -83,7 +98,7 @@ export default function Patients() {
       setBulkResult(res.data);
       if (res.data.created > 0) load();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Upload failed');
+      toast.error(err.response.data.message || 'Upload failed');
     } finally {
       setBulkUploading(false);
     }
@@ -91,20 +106,29 @@ export default function Patients() {
 
   const openBulkModal = () => {
     setBulkFile(null); setBulkResult(null);
-    setBulkHospitalId(hospitals[0]?.id || '');
+    setBulkHospitalId(hospitals[0].id || '');
     setBulkModal(true);
   };
 
   const set = (k, v) => setForm({ ...form, [k]: v });
-  const filtered = patients.filter(p => !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.patientId?.includes(search) || p.phone?.includes(search));
+  const toggleListValue = (key, value) => {
+    setForm((prev) => {
+      const list = Array.isArray(prev[key]) ? prev[key] : [];
+      const next = list.includes(value) ? list.filter((x) => x !== value) : [...list, value];
+      return { ...prev, [key]: next };
+    });
+  };
+  const filtered = patients.filter(p => !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.patientId.includes(search) || p.phone.includes(search));
 
   const columns = [
     { key: 'patientId', label: 'ID', render: (v) => <span style={{ fontFamily: 'monospace', background: '#f1f5f9', padding: '2px 6px', borderRadius: 4, fontSize: 12 }}>{v}</span> },
     { key: 'name', label: 'Name', render: (v, r) => <div style={{ fontWeight: 600, cursor: 'pointer', color: '#2563eb' }} onClick={() => navigate(`/patients/${r.id}`)}>{v}</div> },
-    { key: 'gender', label: 'Gender', render: (v) => v ? v.charAt(0).toUpperCase() + v.slice(1) : '—' },
-    { key: 'bloodGroup', label: 'Blood', render: (v) => v ? <Badge text={v} type="default" /> : '—' },
+    { key: 'gender', label: 'Gender', render: (v) => v ? v.charAt(0).toUpperCase() + v.slice(1) : '-'},
+    { key: 'bloodGroup', label: 'Blood', render: (v) => v ? <Badge text={v} type="default" /> : '-'},
     { key: 'phone', label: 'Phone' },
-    { key: 'hospital', label: 'Hospital', render: (v) => v?.name || '—' },
+    { key: 'clinicalAlerts', label: 'Alerts', render: (v) => Array.isArray(v) && v.length ? <span style={{ color: '#b91c1c', fontWeight: 700 }}>{v.length}</span> : '-' },
+    { key: 'referralSource', label: 'Referral', render: (v) => v || '-' },
+    { key: 'hospital', label: 'Hospital', render: (v) => v.name || '-' },
     { key: 'id', label: 'Actions', render: (_, r) => (
       <div className={styles.actions}>
         <button className={styles.btnEdit} onClick={() => navigate(`/patients/${r.id}`)}>View</button>
@@ -147,10 +171,14 @@ export default function Patients() {
             <div className={styles.field}><label className={styles.label}>Phone *</label><input className={styles.input} value={form.phone || ''} onChange={(e) => set('phone', e.target.value)} required /></div>
             <div className={styles.field}><label className={styles.label}>Email</label><input className={styles.input} type="email" value={form.email || ''} onChange={(e) => set('email', e.target.value)} /></div>
             <div className={styles.field}><label className={styles.label}>Hospital *</label>
-              <select className={styles.input} value={form.hospitalId || ''} onChange={(e) => set('hospitalId', e.target.value)} required>
-                <option value="">Select Hospital</option>
-                {hospitals.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
-              </select>
+              <SearchableSelect
+                className={styles.input}
+                value={form.hospitalId || ''}
+                onChange={(v) => set('hospitalId', v)}
+                placeholder="Search hospital"
+                emptyLabel="Select Hospital"
+                options={hospitals.map((h) => ({ value: h.id, label: h.name }))}
+              />
             </div>
             <div className={styles.field} style={{ gridColumn: 'span 2' }}><label className={styles.label}>Address</label><input className={styles.input} value={form.address || ''} onChange={(e) => set('address', e.target.value)} /></div>
             <div className={styles.field}><label className={styles.label}>City</label><input className={styles.input} value={form.city || ''} onChange={(e) => set('city', e.target.value)} /></div>
@@ -159,8 +187,75 @@ export default function Patients() {
             <div className={styles.field}><label className={styles.label}>Emergency Phone</label><input className={styles.input} value={form.emergencyContactPhone || ''} onChange={(e) => set('emergencyContactPhone', e.target.value)} /></div>
             <div className={styles.field}><label className={styles.label}>Insurance Provider</label><input className={styles.input} value={form.insuranceProvider || ''} onChange={(e) => set('insuranceProvider', e.target.value)} /></div>
             <div className={styles.field}><label className={styles.label}>Insurance Number</label><input className={styles.input} value={form.insuranceNumber || ''} onChange={(e) => set('insuranceNumber', e.target.value)} /></div>
+            <div className={styles.field}>
+              <label className={styles.label}>Referral Source</label>
+              <select className={styles.input} value={form.referralSource || ''} onChange={(e) => set('referralSource', e.target.value)}>
+                <option value="">Select</option>
+                {['Walk-in', 'Google', 'Website', 'Doctor Referral', 'Friend/Family', 'Insurance', 'Corporate', 'Camp', 'Social Media', 'Other'].map((src) => (
+                  <option key={src} value={src}>{src}</option>
+                ))}
+              </select>
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label}>Referral Detail</label>
+              <input className={styles.input} value={form.referralDetail || ''} onChange={(e) => set('referralDetail', e.target.value)} placeholder="Doctor name / campaign / notes" />
+            </div>
             <div className={styles.field} style={{ gridColumn: 'span 2' }}><label className={styles.label}>Allergies</label><textarea className={styles.input} rows={2} value={form.allergies || ''} onChange={(e) => set('allergies', e.target.value)} /></div>
             <div className={styles.field} style={{ gridColumn: 'span 2' }}><label className={styles.label}>Medical History</label><textarea className={styles.input} rows={3} value={form.medicalHistory || ''} onChange={(e) => set('medicalHistory', e.target.value)} /></div>
+            <div className={styles.field} style={{ gridColumn: 'span 2' }}>
+              <label className={styles.label}>Chronic Conditions</label>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {CHRONIC_CONDITIONS.map((condition) => {
+                  const active = (form.chronicConditions || []).includes(condition);
+                  return (
+                    <button
+                      key={condition}
+                      type="button"
+                      onClick={() => toggleListValue('chronicConditions', condition)}
+                      style={{
+                        border: `1px solid ${active ? '#1d4ed8' : '#cbd5e1'}`,
+                        color: active ? '#1d4ed8' : '#475569',
+                        background: active ? '#dbeafe' : '#fff',
+                        borderRadius: 999,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        padding: '4px 10px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {condition}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className={styles.field} style={{ gridColumn: 'span 2' }}>
+              <label className={styles.label}>Clinical Alerts</label>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {CLINICAL_ALERTS.map((alert) => {
+                  const active = (form.clinicalAlerts || []).includes(alert);
+                  return (
+                    <button
+                      key={alert}
+                      type="button"
+                      onClick={() => toggleListValue('clinicalAlerts', alert)}
+                      style={{
+                        border: `1px solid ${active ? '#b91c1c' : '#cbd5e1'}`,
+                        color: active ? '#b91c1c' : '#475569',
+                        background: active ? '#fee2e2' : '#fff',
+                        borderRadius: 999,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        padding: '4px 10px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {alert}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
           <div className={styles.formActions}>
             <button type="button" className={styles.btnSecondary} onClick={() => setModal(false)}>Cancel</button>
@@ -174,7 +269,7 @@ export default function Patients() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           {/* Step 1: Download template */}
           <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: '16px 20px' }}>
-            <div style={{ fontWeight: 600, color: '#1e40af', marginBottom: 6 }}>Step 1 — Download Template</div>
+            <div style={{ fontWeight: 600, color: '#1e40af', marginBottom: 6 }}>Step 1 - Download Template</div>
             <div style={{ fontSize: 13, color: '#374151', marginBottom: 12 }}>
               Download the Excel template, fill in your patient data, and then upload it below.
               The template includes sample rows and an Instructions sheet explaining each column.
@@ -189,21 +284,25 @@ export default function Patients() {
 
           {/* Step 2: Upload */}
           <form onSubmit={handleBulkUpload} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div style={{ fontWeight: 600, color: '#1e40af' }}>Step 2 — Upload Filled Template</div>
+            <div style={{ fontWeight: 600, color: '#1e40af' }}>Step 2 - Upload Filled Template</div>
 
             <div className={styles.field}>
               <label className={styles.label}>Hospital *</label>
-              <select className={styles.input} value={bulkHospitalId} onChange={(e) => setBulkHospitalId(e.target.value)} required>
-                <option value="">Select Hospital</option>
-                {hospitals.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
-              </select>
+              <SearchableSelect
+                className={styles.input}
+                value={bulkHospitalId}
+                onChange={setBulkHospitalId}
+                placeholder="Search hospital"
+                emptyLabel="Select Hospital"
+                options={hospitals.map((h) => ({ value: h.id, label: h.name }))}
+              />
             </div>
 
             <div
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => fileInputRef.current.click()}
               style={{
                 border: '2px dashed #93c5fd', borderRadius: 10, padding: '24px 16px',
-                textAlign: 'center', cursor: 'pointer', background: bulkFile ? '#f0fdf4' : '#f8fafc',
+                textAlign: 'center', cursor: 'pointer', background:bulkFile ? '#f0fdf4' : '#f8fafc',
                 transition: 'background 0.2s',
               }}
             >
@@ -216,14 +315,14 @@ export default function Patients() {
                   <div style={{ fontSize: 28, marginBottom: 6 }}>📊</div>
                   <div style={{ fontWeight: 600, color: '#15803d' }}>{bulkFile.name}</div>
                   <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
-                    {(bulkFile.size / 1024).toFixed(1)} KB — Click to change
+                    {(bulkFile.size / 1024).toFixed(1)} KB - Click to change
                   </div>
                 </div>
               ) : (
                 <div>
                   <div style={{ fontSize: 28, marginBottom: 6 }}>📂</div>
                   <div style={{ fontWeight: 600, color: '#374151' }}>Click to select Excel file</div>
-                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>.xlsx or .xls — max 5 MB</div>
+                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>.xlsx or .xls - max 5 MB</div>
                 </div>
               )}
             </div>
@@ -232,9 +331,9 @@ export default function Patients() {
             {bulkResult && (
               <div style={{ borderRadius: 8, overflow: 'hidden' }}>
                 <div style={{
-                  background: bulkResult.errors.length === 0 ? '#dcfce7' : '#fef3c7',
+                  background:bulkResult.errors.length === 0 ? '#dcfce7' : '#fef3c7',
                   padding: '12px 16px', fontWeight: 600,
-                  color: bulkResult.errors.length === 0 ? '#15803d' : '#92400e',
+                  color:bulkResult.errors.length === 0 ? '#15803d' : '#92400e',
                 }}>
                   {bulkResult.message}
                 </div>

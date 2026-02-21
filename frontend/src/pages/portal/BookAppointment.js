@@ -54,7 +54,7 @@ export default function BookAppointment() {
       });
       toast.success('Appointment booked successfully!');
       navigate('/patient-portal/appointments');
-    } catch (err) { toast.error(err.response?.data?.message || 'Booking failed'); }
+    } catch (err) { toast.error(err.response.data.message || 'Booking failed'); }
     finally { setSubmitting(false); }
   };
 
@@ -89,8 +89,8 @@ export default function BookAppointment() {
               {hospitals.map(h => (
                 <button key={h.id} onClick={() => selectHospital(h)}
                   className="text-left p-4 border rounded-xl hover:border-blue-400 hover:bg-blue-50 transition-colors">
-                  <div className="font-semibold text-gray-800">🏥 {h.name}</div>
-                  <div className="text-sm text-gray-500">{h.city}, {h.state} · {h.type}</div>
+                  <div className="font-semibold text-gray-800">Hospital {h.name}</div>
+                  <div className="text-sm text-gray-500">{h.city}, {h.state}  |  {h.type}</div>
                 </button>
               ))}
             </div>
@@ -102,7 +102,7 @@ export default function BookAppointment() {
           <div>
             <button onClick={() => setStep(0)} className="text-sm text-blue-600 mb-4 flex items-center gap-1">← Back</button>
             <h3 className="font-semibold text-gray-700 mb-1">Select a Doctor</h3>
-            <p className="text-sm text-gray-400 mb-4">{selected.hospital?.name}</p>
+            <p className="text-sm text-gray-400 mb-4">{selected.hospital.name}</p>
             <div className="grid gap-3">
               {doctors.filter(d => d.isActive).map(d => (
                 <button key={d.id} onClick={() => selectDoctor(d)}
@@ -111,7 +111,7 @@ export default function BookAppointment() {
                     <div>
                       <div className="font-semibold text-gray-800">Dr. {d.name}</div>
                       <div className="text-sm text-blue-600">{d.specialization}</div>
-                      <div className="text-sm text-gray-500 mt-1">{d.qualification} · {d.experience} yrs exp</div>
+                      <div className="text-sm text-gray-500 mt-1">{d.qualification}  |  {d.experience} yrs exp</div>
                     </div>
                     <div className="text-right">
                       <div className="text-green-600 font-bold">${d.consultationFee}</div>
@@ -119,7 +119,7 @@ export default function BookAppointment() {
                     </div>
                   </div>
                   <div className="mt-2 text-xs text-gray-400">
-                    ⏰ {d.availableFrom?.slice(0,5)} – {d.availableTo?.slice(0,5)} · {d.availableDays?.join(', ')}
+                    ⏰ {d.availableFrom.slice(0,5)} - {d.availableTo.slice(0,5)}  |  {d.availableDays.join(', ')}
                   </div>
                 </button>
               ))}
@@ -133,7 +133,7 @@ export default function BookAppointment() {
           <div>
             <button onClick={() => setStep(1)} className="text-sm text-blue-600 mb-4 flex items-center gap-1">← Back</button>
             <h3 className="font-semibold text-gray-700 mb-1">Choose Date & Time</h3>
-            <p className="text-sm text-gray-400 mb-4">Dr. {selected.doctor?.name} · {selected.doctor?.specialization}</p>
+            <p className="text-sm text-gray-400 mb-4">Dr. {selected.doctor.name}  |  {selected.doctor.specialization}</p>
 
             <div className="mb-5">
               <label className="block text-sm font-medium text-gray-700 mb-1">Select Date</label>
@@ -178,7 +178,7 @@ export default function BookAppointment() {
 
             <button onClick={() => setStep(3)} disabled={!selected.date || !selected.time}
               className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold disabled:opacity-50 hover:bg-blue-700 transition-colors">
-              Continue →
+              Continue {'->'}
             </button>
           </div>
         )}
@@ -190,13 +190,13 @@ export default function BookAppointment() {
             <h3 className="font-semibold text-gray-700 mb-4">Confirm Appointment</h3>
             <div className="bg-gray-50 rounded-xl p-5 space-y-3 mb-6">
               {[
-                ['Hospital', selected.hospital?.name],
-                ['Doctor', `Dr. ${selected.doctor?.name}`],
-                ['Specialization', selected.doctor?.specialization],
+                ['Hospital', selected.hospital.name],
+                ['Doctor', `Dr. ${selected.doctor.name}`],
+                ['Specialization', selected.doctor.specialization],
                 ['Date', selected.date],
                 ['Time', selected.time],
-                ['Type', selected.type?.replace('_',' ')],
-                ['Consultation Fee', `$${selected.doctor?.consultationFee}`],
+                ['Type', selected.type.replace('_',' ')],
+                ['Consultation Fee', `$${selected.doctor.consultationFee}`],
               ].map(([label, value]) => (
                 <div key={label} className="flex justify-between text-sm">
                   <span className="text-gray-500">{label}</span>
@@ -207,7 +207,7 @@ export default function BookAppointment() {
             </div>
             <button onClick={handleBook} disabled={submitting}
               className="w-full bg-green-600 text-white py-3 rounded-xl font-semibold hover:bg-green-700 disabled:opacity-50 transition-colors">
-              {submitting ? 'Booking...' : '✅ Confirm Booking'}
+              {submitting ? 'Booking...' : 'Done Confirm Booking'}
             </button>
           </div>
         )}

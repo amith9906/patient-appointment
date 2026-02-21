@@ -57,7 +57,7 @@ export default function PatientDetail() {
   };
 
   const handleDeleteReport = async (reportId) => {
-    if (!window.confirm('Delete this report?')) return;
+    if (!window.confirm('Delete this report')) return;
     try { await reportAPI.delete(reportId); toast.success('Report deleted'); loadReports(); }
     catch { toast.error('Error'); }
   };
@@ -97,7 +97,7 @@ export default function PatientDetail() {
   const reportCols = [
     { key: 'title', label: 'Title', render: (v, r) => <div><div style={{ fontWeight: 600 }}>{v}</div><div style={{ fontSize: 12, color: '#64748b' }}>{r.originalName}</div></div> },
     { key: 'type', label: 'Type', render: (v) => <Badge text={v.replace('_', ' ')} type="default" /> },
-    { key: 'fileSize', label: 'Size', render: (v) => v ? `${(v / 1024).toFixed(1)} KB` : '—' },
+    { key: 'fileSize', label: 'Size', render: (v) => v ? `${(v / 1024).toFixed(1)} KB` : '-'},
     { key: 'uploadedBy', label: 'Uploaded By' },
     { key: 'createdAt', label: 'Date', render: (v) => new Date(v).toLocaleDateString() },
     { key: 'id', label: 'Actions', render: (_, r) => (
@@ -111,8 +111,8 @@ export default function PatientDetail() {
   const apptCols = [
     { key: 'appointmentNumber', label: 'Apt #' },
     { key: 'appointmentDate', label: 'Date' },
-    { key: 'appointmentTime', label: 'Time', render: (v) => v?.slice(0, 5) },
-    { key: 'doctor', label: 'Doctor', render: (v) => v ? `Dr. ${v.name}` : '—' },
+    { key: 'appointmentTime', label: 'Time', render: (v) => v.slice(0, 5) },
+    { key: 'doctor', label: 'Doctor', render: (v) => v ? `Dr. ${v.name}` : '-'},
     { key: 'type', label: 'Type', render: (v) => <Badge text={v} type="default" /> },
     { key: 'status', label: 'Status', render: (v) => <Badge text={v} type={v} /> },
     { key: 'id', label: 'Actions', render: (_, r) => (
@@ -139,7 +139,7 @@ export default function PatientDetail() {
       <div style={{ display: 'flex', gap: 8, marginBottom: 20, borderBottom: '1px solid #e2e8f0', paddingBottom: 0 }}>
         {['info', 'appointments', 'reports'].map(t => (
           <button key={t} onClick={() => setTab(t)}
-            style={{ padding: '8px 20px', border: 'none', borderBottom: tab === t ? '3px solid #2563eb' : '3px solid transparent', background: 'none', fontWeight: 600, fontSize: 14, color: tab === t ? '#2563eb' : '#64748b', cursor: 'pointer' }}>
+            style={{ padding: '8px 20px', border: 'none', borderBottom:tab === t ? '3px solid #2563eb' : '3px solid transparent', background: 'none', fontWeight: 600, fontSize: 14, color:tab === t ? '#2563eb' : '#64748b', cursor: 'pointer' }}>
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
@@ -163,7 +163,7 @@ export default function PatientDetail() {
             ].map(([label, value]) => (
               <div key={label} className={styles.infoItem}>
                 <div className={styles.infoLabel}>{label}</div>
-                <div className={styles.infoValue}>{value || '—'}</div>
+                <div className={styles.infoValue}>{value || '-'}</div>
               </div>
             ))}
           </div>
@@ -177,6 +177,30 @@ export default function PatientDetail() {
             <div style={{ marginTop: 16 }}>
               <div className={styles.infoLabel}>Medical History</div>
               <div style={{ background: '#f8fafc', padding: '10px 14px', borderRadius: 8, marginTop: 6, fontSize: 14 }}>{patient.medicalHistory}</div>
+            </div>
+          )}
+          {Array.isArray(patient.chronicConditions) && patient.chronicConditions.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div className={styles.infoLabel}>Chronic Conditions</div>
+              <div style={{ marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {patient.chronicConditions.map((c) => (
+                  <span key={c} style={{ background: '#dbeafe', color: '#1d4ed8', borderRadius: 999, fontSize: 12, fontWeight: 700, padding: '3px 9px' }}>
+                    {c}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {Array.isArray(patient.clinicalAlerts) && patient.clinicalAlerts.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div className={styles.infoLabel}>Clinical Alerts</div>
+              <div style={{ marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {patient.clinicalAlerts.map((a) => (
+                  <span key={a} style={{ background: '#fee2e2', color: '#b91c1c', borderRadius: 999, fontSize: 12, fontWeight: 700, padding: '3px 9px' }}>
+                    {a}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -229,15 +253,15 @@ export default function PatientDetail() {
               {[
                 ['Appointment #', selectedAppointment.appointmentNumber],
                 ['Date', selectedAppointment.appointmentDate],
-                ['Time', selectedAppointment.appointmentTime?.slice(0, 5)],
-                ['Doctor', selectedAppointment.doctor ? `Dr. ${selectedAppointment.doctor.name}` : '—'],
+                ['Time', selectedAppointment.appointmentTime.slice(0, 5)],
+                ['Doctor', selectedAppointment.doctor ? `Dr. ${selectedAppointment.doctor.name}` : '-'],
                 ['Type', selectedAppointment.type],
                 ['Status', selectedAppointment.status],
-                ['Treatment Bill', selectedAppointment.treatmentBill ? `$${selectedAppointment.treatmentBill}` : '—'],
+                ['Treatment Bill', selectedAppointment.treatmentBill ? `$${selectedAppointment.treatmentBill}` : '-'],
               ].map(([label, value]) => (
                 <div key={label} className={styles.infoItem}>
                   <div className={styles.infoLabel}>{label}</div>
-                  <div className={styles.infoValue}>{value || '—'}</div>
+                  <div className={styles.infoValue}>{value || '-'}</div>
                 </div>
               ))}
             </div>
@@ -245,20 +269,20 @@ export default function PatientDetail() {
             <div>
               <div className={styles.infoLabel}>Treatment Done</div>
               <div style={{ background: '#fff7ed', padding: '10px 14px', borderRadius: 8, marginTop: 6, fontSize: 14 }}>
-                {selectedAppointment.treatmentDone || '—'}
+                {selectedAppointment.treatmentDone || '-'}
               </div>
             </div>
 
             <div>
               <div className={styles.infoLabel}>Consultation Notes</div>
               <div style={{ background: '#f8fafc', padding: '10px 14px', borderRadius: 8, marginTop: 6, fontSize: 14 }}>
-                {selectedAppointment.notes || selectedAppointment.reason || '—'}
+                {selectedAppointment.notes || selectedAppointment.reason || '-'}
               </div>
             </div>
 
             <div>
               <div className={styles.infoLabel}>Prescriptions / Medications</div>
-              {selectedAppointment.prescriptions?.length ? (
+              {selectedAppointment.prescriptions.length ? (
                 <div style={{ marginTop: 8, border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                     <thead>
@@ -273,11 +297,11 @@ export default function PatientDetail() {
                     <tbody>
                       {selectedAppointment.prescriptions.map((p) => (
                         <tr key={p.id} style={{ borderTop: '1px solid #e2e8f0' }}>
-                          <td style={{ padding: '8px 10px' }}>{p.medication?.name || p.customMedicationName || '—'}</td>
-                          <td style={{ padding: '8px 10px' }}>{p.dosage || '—'}</td>
-                          <td style={{ padding: '8px 10px' }}>{p.frequency || '—'}</td>
-                          <td style={{ padding: '8px 10px' }}>{p.duration || '—'}</td>
-                          <td style={{ padding: '8px 10px' }}>{p.instructions || '—'}</td>
+                          <td style={{ padding: '8px 10px' }}>{p.medication.name || p.customMedicationName || '-'}</td>
+                          <td style={{ padding: '8px 10px' }}>{p.dosage || '-'}</td>
+                          <td style={{ padding: '8px 10px' }}>{p.frequency || '-'}</td>
+                          <td style={{ padding: '8px 10px' }}>{p.duration || '-'}</td>
+                          <td style={{ padding: '8px 10px' }}>{p.instructions || '-'}</td>
                         </tr>
                       ))}
                     </tbody>

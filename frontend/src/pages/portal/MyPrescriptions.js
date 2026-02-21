@@ -16,7 +16,7 @@ export default function MyPrescriptions() {
       <h2 className="text-xl font-bold text-gray-800 mb-6">My Prescriptions</h2>
       {prescriptions.length === 0 ? (
         <div className="bg-white rounded-xl p-16 text-center border border-gray-100">
-          <div className="text-5xl mb-3">💊</div>
+          <div className="text-5xl mb-3">Rx</div>
           <p className="text-gray-500">No prescriptions found</p>
         </div>
       ) : (
@@ -25,23 +25,23 @@ export default function MyPrescriptions() {
             <div key={p.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
               <div className="flex items-start justify-between mb-3">
                 <div>
-                  <div className="font-bold text-lg text-gray-800">💊 {p.medication?.name}</div>
-                  <div className="text-sm text-gray-500">{p.medication?.genericName} · {p.medication?.category}</div>
+                  <div className="font-bold text-lg text-gray-800">Rx {p.medication.name}</div>
+                  <div className="text-sm text-gray-500">{p.medication.genericName}  |  {p.medication.category}</div>
                 </div>
                 <span className="bg-green-50 text-green-700 text-xs px-3 py-1 rounded-full font-medium">Active</span>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3 bg-gray-50 rounded-lg p-4">
                 {[
-                  ['Dosage', p.dosage || p.medication?.dosage],
+                  ['Dosage', p.dosage || p.medication.dosage],
                   ['Frequency', p.frequency],
                   ['Duration', p.duration],
                   ['Quantity', p.quantity],
-                  ['Prescribed By', p.appointment?.doctor ? `Dr. ${p.appointment.doctor.name}` : '—'],
-                  ['Date', p.appointment ? new Date(p.createdAt).toLocaleDateString() : '—'],
+                  ['Prescribed By', p.appointment.doctor ? `Dr. ${p.appointment.doctor.name}` : '-'],
+                  ['Date', p.appointment ? new Date(p.createdAt).toLocaleDateString() : '-'],
                 ].map(([label, value]) => (
                   <div key={label}>
                     <div className="text-xs text-gray-400 uppercase tracking-wide">{label}</div>
-                    <div className="text-sm font-semibold text-gray-700 mt-0.5">{value || '—'}</div>
+                    <div className="text-sm font-semibold text-gray-700 mt-0.5">{value || '-'}</div>
                   </div>
                 ))}
               </div>
@@ -50,8 +50,8 @@ export default function MyPrescriptions() {
                   📌 {p.instructions}
                 </div>
               )}
-              {p.medication?.sideEffects && (
-                <div className="mt-2 text-xs text-gray-400">⚠️ Side effects: {p.medication.sideEffects}</div>
+              {p.medication.sideEffects && (
+                <div className="mt-2 text-xs text-gray-400">Warning️ Side effects: {p.medication.sideEffects}</div>
               )}
             </div>
           ))}
