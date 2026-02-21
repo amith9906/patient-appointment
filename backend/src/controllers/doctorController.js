@@ -67,10 +67,11 @@ exports.getMyAppointments = async (req, res) => {
   try {
     const doctor = await resolveDoctorProfileForUser(req.user);
     if (!doctor) return res.status(404).json({ message: 'Doctor profile not found' });
-    const { status, date } = req.query;
+    const { status, date, from, to } = req.query;
     const where = { doctorId: doctor.id };
     if (status) where.status = status;
     if (date) where.appointmentDate = date;
+    else if (from && to) where.appointmentDate = { [Op.between]: [from, to] };
     const appointments = await Appointment.findAll({
       where,
       include: [{ model: Patient, as: 'patient', attributes: ['id', 'name', 'patientId', 'phone', 'dateOfBirth', 'bloodGroup', 'allergies'] }],

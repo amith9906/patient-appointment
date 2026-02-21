@@ -11,6 +11,7 @@ const NAV_BY_ROLE = {
     { path: '/doctors', label: 'Doctors', icon: '👨‍⚕️' },
     { path: '/patients', label: 'Patients', icon: '🧑‍🤝‍🧑' },
     { path: '/appointments', label: 'Appointments', icon: '📅' },
+    { path: '/billing', label: 'Billing', icon: '💰' },
     { path: '/medications', label: 'Medications', icon: '💊' },
     { path: '/vendors', label: 'Vendors', icon: '🏭' },
     { path: '/stock', label: 'Stock Management', icon: '📦' },
@@ -27,6 +28,7 @@ const NAV_BY_ROLE = {
     { path: '/doctors', label: 'Doctors', icon: '👨‍⚕️' },
     { path: '/patients', label: 'Patients', icon: '🧑‍🤝‍🧑' },
     { path: '/appointments', label: 'Appointments', icon: '📅' },
+    { path: '/billing', label: 'Billing', icon: '💰' },
     { path: '/medications', label: 'Medications', icon: '💊' },
     { path: '/vendors', label: 'Vendors', icon: '🏭' },
     { path: '/stock', label: 'Stock Management', icon: '📦' },
@@ -39,6 +41,7 @@ const NAV_BY_ROLE = {
   receptionist: [
     { path: '/', label: 'Dashboard', icon: '📊' },
     { path: '/appointments', label: 'Appointments', icon: '📅' },
+    { path: '/billing', label: 'Billing', icon: '💰' },
     { path: '/patients', label: 'Patients', icon: '🧑‍🤝‍🧑' },
     { path: '/doctors', label: 'Doctors', icon: '👨‍⚕️' },
     { path: '/medications', label: 'Medications', icon: '💊' },

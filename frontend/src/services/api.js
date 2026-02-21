@@ -90,6 +90,9 @@ export const appointmentAPI = {
   create: (data) => api.post('/appointments', data),
   update: (id, data) => api.put(`/appointments/${id}`, data),
   cancel: (id, reason) => api.put(`/appointments/${id}/cancel`, { reason }),
+  getBillItems: (id) => api.get(`/appointments/${id}/bill-items`),
+  saveBillItems: (id, items) => api.put(`/appointments/${id}/bill-items`, { items }),
+  markPaid: (id) => api.patch(`/appointments/${id}/mark-paid`),
 };
 
 // Medications

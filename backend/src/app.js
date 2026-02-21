@@ -55,8 +55,17 @@ async function start() {
   try {
     await sequelize.authenticate();
     console.log('Database connected.');
-    await sequelize.sync(); // creates missing tables only — use migrations for schema changes
-    console.log('Models synced.');
+
+    const shouldAutoSync = process.env.NODE_ENV !== 'production'
+      && String(process.env.DB_AUTO_SYNC_ON_START || 'false').toLowerCase() === 'true';
+
+    if (shouldAutoSync) {
+      await sequelize.sync();
+      console.log('Models synced (auto-sync enabled).');
+    } else {
+      console.log('Auto-sync disabled. Run migrations to apply schema changes.');
+    }
+
     app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
   } catch (err) {
     console.error('Startup error:', err);

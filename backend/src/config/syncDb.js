@@ -5,7 +5,7 @@ async function syncDatabase() {
   try {
     await sequelize.authenticate();
     console.log('Database connection established successfully.');
-    await sequelize.sync({ alter: true });
+    await sequelize.sync();  // creates missing tables only, never alters existing ones
     console.log('All models were synchronized successfully.');
     process.exit(0);
   } catch (error) {

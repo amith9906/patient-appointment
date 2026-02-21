@@ -27,7 +27,13 @@ export default function Doctors() {
   };
   useEffect(load, []);
 
-  const openCreate = () => { setEditing(null); setForm(INIT); setModal(true); };
+  const openCreate = () => {
+    setEditing(null);
+    const hospitalId = hospitals.length === 1 ? hospitals[0].id : '';
+    setForm({ ...INIT, hospitalId });
+    if (hospitalId) loadDepts(hospitalId);
+    setModal(true);
+  };
   const openEdit = (doc) => {
     setEditing(doc);
     setForm({ ...doc, hospitalId: doc.hospitalId || '', departmentId: doc.departmentId || '' });

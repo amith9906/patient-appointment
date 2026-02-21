@@ -127,14 +127,16 @@ exports.create = async (req, res) => {
   try {
     const scope = await ensureScopedHospital(req, res);
     if (!scope.allowed) return;
-
+console.log('Request body for creating patient:', req.body);
     const payload = { ...req.body };
     if (!isSuperAdmin(req.user)) payload.hospitalId = scope.hospitalId;
-    if (payload.email === '') payload.email = null;
+    if (payload.email === '')       payload.email = null;
+    if (payload.dateOfBirth === '') payload.dateOfBirth = null;
+    if (payload.bloodGroup === '')  payload.bloodGroup = null;
     if (!payload.name?.trim()) return res.status(400).json({ message: 'name is required' });
     if (!payload.phone?.trim()) return res.status(400).json({ message: 'phone is required' });
     if (!payload.hospitalId) return res.status(400).json({ message: 'hospitalId is required' });
-
+console.log('Creating patient with payload:', payload);
     const patient = await Patient.create(payload);
     res.status(201).json(patient);
   } catch (err) { res.status(400).json({ message: err.message }); }
@@ -153,7 +155,9 @@ exports.update = async (req, res) => {
     }
 
     const payload = { ...req.body };
-    if (payload.email === '') payload.email = null;
+    if (payload.email === '')       payload.email = null;
+    if (payload.dateOfBirth === '') payload.dateOfBirth = null;
+    if (payload.bloodGroup === '')  payload.bloodGroup = null;
     if (!isSuperAdmin(req.user)) delete payload.hospitalId;
     await patient.update(payload);
     res.json(patient);

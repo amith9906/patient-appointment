@@ -13,6 +13,7 @@ const Lab = require('./Lab');
 const LabTest = require('./LabTest');
 const Report = require('./Report');
 const PasswordOtp = require('./PasswordOtp');
+const BillItem = require('./BillItem');
 
 // Hospital -> HospitalSettings (one-to-one)
 Hospital.hasOne(HospitalSettings, { foreignKey: 'hospitalId', as: 'settings' });
@@ -94,6 +95,10 @@ User.belongsTo(Hospital, { foreignKey: 'hospitalId', as: 'hospital' });
 User.hasMany(PasswordOtp, { foreignKey: 'userId', as: 'passwordOtps' });
 PasswordOtp.belongsTo(User, { foreignKey: 'userId', as: 'user' });
 
+// Appointment -> BillItem (one-to-many)
+Appointment.hasMany(BillItem, { foreignKey: 'appointmentId', as: 'billItems' });
+BillItem.belongsTo(Appointment, { foreignKey: 'appointmentId', as: 'appointment' });
+
 module.exports = {
   sequelize,
   User,
@@ -110,4 +115,5 @@ module.exports = {
   LabTest,
   Report,
   PasswordOtp,
+  BillItem,
 };

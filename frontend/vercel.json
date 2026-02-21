@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://patient-appointment-fsgr.onrender.com/api/$1"
+      "destination": "http://localhost:5010/api/$1"
     },
     {
       "source": "/(.*)",

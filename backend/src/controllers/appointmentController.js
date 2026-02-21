@@ -1,4 +1,4 @@
-const { Appointment, Doctor, Patient, Hospital, Prescription, Medication, Vitals } = require('../models');
+const { Appointment, Doctor, Patient, Hospital, Prescription, Medication, Vitals, BillItem } = require('../models');
 const { Op } = require('sequelize');
 const { ensureScopedHospital, isSuperAdmin } = require('../utils/accessScope');
 
@@ -338,6 +338,31 @@ exports.getBillingAnalytics = async (req, res) => {
         return { ...x, label };
       });
 
+    // Category-wise breakdown from BillItem table
+    const billedApptIds = billedAppointments.map(a => a.id);
+    const categoryMap = new Map();
+    if (billedApptIds.length > 0) {
+      const billItems = await BillItem.findAll({ where: { appointmentId: billedApptIds } });
+      billItems.forEach(item => {
+        const cat = item.category || 'other';
+        if (!categoryMap.has(cat)) categoryMap.set(cat, { category: cat, total: 0, count: 0 });
+        const rec = categoryMap.get(cat);
+        rec.total += Number(item.amount || 0);
+        rec.count += 1;
+      });
+    }
+    // Add consultation fee as a synthetic category entry
+    if (totalConsultationAmount > 0) {
+      categoryMap.set('consultation', {
+        category: 'consultation',
+        total: parseFloat(totalConsultationAmount.toFixed(2)),
+        count: billedAppointments.filter(a => Number(a.fee || 0) > 0).length,
+      });
+    }
+    const categoryWise = Array.from(categoryMap.values())
+      .map(c => ({ ...c, total: parseFloat(c.total.toFixed(2)) }))
+      .sort((a, b) => b.total - a.total);
+
     res.json({
       summary: {
         totalBills,
@@ -363,6 +388,7 @@ exports.getBillingAnalytics = async (req, res) => {
       dayWise,
       weekWise,
       monthWise,
+      categoryWise,
     });
   } catch (err) {
     res.status(500).json({ message: err.message });

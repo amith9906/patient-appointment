@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import api, { pdfAPI, vitalsAPI } from '../../services/api';
+import api, { pdfAPI, vitalsAPI, appointmentAPI } from '../../services/api';
 import { toast } from 'react-toastify';
 
 // ─── Prescription constants ───────────────────────────────────────────────────
@@ -138,6 +138,10 @@ export default function AppointmentDetail() {
   const [vitalsSaving, setVitalsSaving] = useState(false);
   const [vitalsRecorded, setVitalsRecorded] = useState(false);
 
+  // Bill items
+  const [billItems, setBillItems] = useState([]);
+  const [billSaving, setBillSaving] = useState(false);
+
   // ── Load data ─────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -146,7 +150,8 @@ export default function AppointmentDetail() {
       api.get('/medications'),
       api.get(`/prescriptions/appointment/${id}`),
       vitalsAPI.get(id),
-    ]).then(([a, m, p, v]) => {
+      appointmentAPI.getBillItems(id),
+    ]).then(([a, m, p, v, b]) => {
       const apptData = a.data;
       setAppt(apptData);
       setMedications(m.data);
@@ -157,6 +162,7 @@ export default function AppointmentDetail() {
         treatmentDone: apptData.treatmentDone || '',
         treatmentBill: apptData.treatmentBill || '',
       });
+      setBillItems((b.data || []).map(i => ({ ...i, _key: i.id })));
 
       // Load vitals if recorded
       if (v.data && v.data.id) {
@@ -223,6 +229,43 @@ export default function AppointmentDetail() {
   const bmi = calcBMI(vitalsForm.weight, vitalsForm.height);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
+
+  // ── Bill items helpers ─────────────────────────────────────────────────────
+
+  const addBillRow = () => setBillItems(prev => [...prev, { _key: Date.now(), description: '', category: 'other', quantity: 1, unitPrice: '', amount: 0 }]);
+
+  const updateBillRow = (key, field, value) => {
+    setBillItems(prev => prev.map(item => {
+      if (item._key !== key) return item;
+      const updated = { ...item, [field]: value };
+      const qty = parseFloat(field === 'quantity' ? value : updated.quantity) || 0;
+      const price = parseFloat(field === 'unitPrice' ? value : updated.unitPrice) || 0;
+      updated.amount = parseFloat((qty * price).toFixed(2));
+      return updated;
+    }));
+  };
+
+  const removeBillRow = (key) => setBillItems(prev => prev.filter(i => i._key !== key));
+
+  const saveBill = async () => {
+    const validItems = billItems.filter(i => i.description?.trim() && parseFloat(i.unitPrice) > 0);
+    setBillSaving(true);
+    try {
+      const res = await appointmentAPI.saveBillItems(id, validItems);
+      const total = validItems.reduce((s, i) => s + Number(i.amount || 0), 0);
+      setAppt(a => ({ ...a, treatmentBill: total }));
+      setBillItems((res.data || []).map(i => ({ ...i, _key: i.id })));
+      toast.success('Bill saved');
+    } catch { toast.error('Failed to save bill'); } finally { setBillSaving(false); }
+  };
+
+  const togglePaid = async () => {
+    try {
+      const res = await appointmentAPI.markPaid(id);
+      setAppt(a => ({ ...a, isPaid: res.data.isPaid }));
+      toast.success(res.data.isPaid ? 'Marked as Paid' : 'Marked as Unpaid');
+    } catch { toast.error('Failed to update payment status'); }
+  };
 
   const saveNotes = async () => {
     setSaving(true);
@@ -613,12 +656,69 @@ export default function AppointmentDetail() {
               placeholder="Describe treatment/procedure done for this appointment…"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-500 resize-none" />
           </div>
+          {/* ── Bill Items ── */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Treatment Bill</label>
-            <input type="number" step="0.01" min="0" value={notes.treatmentBill}
-              onChange={e => setNotes(n => ({ ...n, treatmentBill: e.target.value }))}
-              placeholder="0.00"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-500" />
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-medium text-gray-700">Bill Items</label>
+              <button type="button" onClick={addBillRow}
+                className="text-xs bg-teal-50 text-teal-700 border border-teal-200 px-3 py-1 rounded-lg hover:bg-teal-100 font-medium">
+                + Add Item
+              </button>
+            </div>
+
+            {billItems.length === 0 ? (
+              <div className="text-xs text-gray-400 italic py-2">No bill items yet. Click "+ Add Item" to add charges.</div>
+            ) : (
+              <div className="space-y-2">
+                {/* Header */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 130px 60px 80px 70px 28px', gap: 4 }}
+                  className="text-xs font-semibold text-gray-500 pb-1 border-b border-gray-100">
+                  <span>Description</span><span>Category</span><span>Qty</span><span>Unit ₹</span><span className="text-right">Amount</span><span/>
+                </div>
+                {billItems.map(item => (
+                  <div key={item._key} style={{ display: 'grid', gridTemplateColumns: '1fr 130px 60px 80px 70px 28px', gap: 4, alignItems: 'center' }}>
+                    <input type="text" value={item.description} placeholder="e.g. Wound dressing"
+                      onChange={e => updateBillRow(item._key, 'description', e.target.value)}
+                      className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-teal-500" />
+                    <select value={item.category} onChange={e => updateBillRow(item._key, 'category', e.target.value)}
+                      className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-teal-500">
+                      {['procedure','medication','lab_test','room_charge','other'].map(c =>
+                        <option key={c} value={c}>{c.replace(/_/g,' ')}</option>)}
+                    </select>
+                    <input type="number" min="0.5" step="0.5" value={item.quantity}
+                      onChange={e => updateBillRow(item._key, 'quantity', e.target.value)}
+                      className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-teal-500" />
+                    <input type="number" min="0" step="0.01" value={item.unitPrice} placeholder="0.00"
+                      onChange={e => updateBillRow(item._key, 'unitPrice', e.target.value)}
+                      className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-teal-500" />
+                    <span className="text-xs font-semibold text-gray-700 text-right pr-1">₹{Number(item.amount || 0).toFixed(2)}</span>
+                    <button type="button" onClick={() => removeBillRow(item._key)}
+                      className="text-red-300 hover:text-red-500 text-base font-bold text-center">×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Totals & pay status */}
+            <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between flex-wrap gap-3">
+              <div className="text-xs text-gray-500 space-y-0.5">
+                {Number(appt?.fee || 0) > 0 && <div>Consultation fee: <strong>₹{Number(appt.fee).toFixed(2)}</strong></div>}
+                <div>Treatment items: <strong>₹{billItems.reduce((s,i) => s + Number(i.amount||0), 0).toFixed(2)}</strong></div>
+                <div className="text-sm font-bold text-gray-800 pt-1">
+                  Total: ₹{(Number(appt?.fee || 0) + billItems.reduce((s,i) => s + Number(i.amount||0), 0)).toFixed(2)}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={saveBill} disabled={billSaving}
+                  className="text-xs bg-teal-600 text-white px-3 py-1.5 rounded-lg hover:bg-teal-700 disabled:opacity-50 font-medium">
+                  {billSaving ? 'Saving…' : 'Save Bill'}
+                </button>
+                <button type="button" onClick={togglePaid}
+                  className={`text-xs px-3 py-1.5 rounded-lg font-medium border transition-colors ${appt?.isPaid ? 'bg-green-50 text-green-700 border-green-300 hover:bg-green-100' : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'}`}>
+                  {appt?.isPaid ? '✓ Paid' : 'Mark as Paid'}
+                </button>
+              </div>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <button onClick={saveNotes} disabled={saving}

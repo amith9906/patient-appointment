@@ -72,6 +72,7 @@ export default function Analytics() {
   const weekWise = data?.weekWise || [];
   const monthWise = data?.monthWise || [];
   const doctorWise = data?.doctorWise || [];
+  const categoryWise = data?.categoryWise || [];
   const latestDay = dayWise[dayWise.length - 1] || { label: 'N/A', amount: 0, paidAmount: 0, pendingAmount: 0 };
   const latestWeek = weekWise[weekWise.length - 1] || { label: 'N/A', amount: 0, paidAmount: 0, pendingAmount: 0 };
   const latestMonth = monthWise[monthWise.length - 1] || { label: 'N/A', amount: 0, paidAmount: 0, pendingAmount: 0 };
@@ -286,6 +287,26 @@ export default function Analytics() {
               <Line type="monotone" dataKey="bills" stroke="#2563eb" strokeWidth={2} name="Bills" />
             </LineChart>
           </ResponsiveContainer>
+        </div>
+
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+          <h3 className="font-semibold text-gray-700 mb-4">Revenue by Category</h3>
+          {categoryWise.length === 0 ? (
+            <div className="text-sm text-gray-500">No itemized bill data available.</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={260}>
+              <PieChart>
+                <Pie
+                  data={categoryWise.map(c => ({ name: c.category.replace(/_/g, ' '), value: c.total }))}
+                  cx="50%" cy="50%" outerRadius={90} dataKey="value"
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  labelLine={false} style={{ fontSize: 10 }}>
+                  {categoryWise.map((_, index) => <Cell key={index} fill={COLORS[index % COLORS.length]} />)}
+                </Pie>
+                <Tooltip formatter={(value) => currency(value)} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
         </div>
 
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">

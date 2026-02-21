@@ -24,6 +24,7 @@ import Reports from './pages/Reports';
 // New pages
 import UserManagement from './pages/UserManagement';
 import Analytics from './pages/Analytics';
+import Billing from './pages/Billing';
 import Settings from './pages/Settings';
 import Vendors from './pages/Vendors';
 import StockManagement from './pages/StockManagement';
@@ -98,11 +99,13 @@ function AppRoutes() {
       <Route path="/patients" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor']}><Patients /></PrivateRoute>} />
       <Route path="/patients/:id" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor']}><PatientDetail /></PrivateRoute>} />
       <Route path="/appointments" element={<PrivateRoute roles={['super_admin','admin','receptionist']}><Appointments /></PrivateRoute>} />
+      <Route path="/appointments/:id" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor']}><AppointmentDetail /></PrivateRoute>} />
       <Route path="/medications" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor','lab_technician']}><Medications /></PrivateRoute>} />
       <Route path="/labs" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor','lab_technician']}><Labs /></PrivateRoute>} />
       <Route path="/reports" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor','lab_technician']}><Reports /></PrivateRoute>} />
       <Route path="/users" element={<PrivateRoute roles={['super_admin','admin']}><UserManagement /></PrivateRoute>} />
       <Route path="/analytics" element={<PrivateRoute roles={['super_admin','admin']}><Analytics /></PrivateRoute>} />
+      <Route path="/billing" element={<PrivateRoute roles={['super_admin','admin','receptionist']}><Billing /></PrivateRoute>} />
       <Route path="/settings" element={<PrivateRoute roles={['super_admin','admin']}><Settings /></PrivateRoute>} />
       <Route path="/change-password" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor','patient','lab_technician']}><ChangePassword /></PrivateRoute>} />
       <Route path="/vendors" element={<PrivateRoute roles={['super_admin','admin','receptionist']}><Vendors /></PrivateRoute>} />

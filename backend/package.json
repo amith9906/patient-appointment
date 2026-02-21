@@ -5,7 +5,11 @@
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",
+    "start:prod": "npm run migrate && npm start",
     "dev": "nodemon src/app.js",
+    "migrate": "sequelize-cli db:migrate",
+    "migrate:undo": "sequelize-cli db:migrate:undo",
+    "migrate:status": "sequelize-cli db:migrate:status",
     "db:sync": "node src/config/syncDb.js",
     "seed:admin": "node src/scripts/seedAdmin.js"
   },
@@ -25,6 +29,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "nodemon": "^3.1.0"
+    "nodemon": "^3.1.0",
+    "sequelize-cli": "^6.6.5"
   }
 }
