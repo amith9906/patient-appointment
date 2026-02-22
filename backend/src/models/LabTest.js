@@ -23,6 +23,10 @@ const LabTest = sequelize.define('LabTest', {
   isAbnormal: { type: DataTypes.BOOLEAN, defaultValue: false },
   technicianNotes: { type: DataTypes.TEXT },
   isPaid: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // Structured template result fields
+  templateId: { type: DataTypes.UUID, allowNull: true },
+  templateValues: { type: DataTypes.JSONB, allowNull: true, comment: '{ [fieldKey]: value }' },
+  abnormalFields: { type: DataTypes.JSONB, defaultValue: [], comment: 'Array of field keys flagged as abnormal' },
 }, {
   hooks: {
     beforeCreate: async (test) => {

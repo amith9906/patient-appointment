@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { appointmentAPI, corporateAPI, doctorAPI, packageAPI } from '../services/api';
+import { exportToCSV } from '../utils/exportCsv';
 import Modal from '../components/Modal';
 import SearchableSelect from '../components/SearchableSelect';
+import PaginationControls from '../components/PaginationControls';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
 
@@ -56,6 +58,18 @@ const CLAIM_STATUS_SLA_DAYS = {
   approved: 2,
 };
 
+const DEFAULT_FILTERS = {
+  dateFrom: '',
+  dateTo: '',
+  doctorId: '',
+  isPaid: '',
+  billingType: '',
+  claimStatus: '',
+  claimPriority: '',
+  patientName: '',
+  patientPhone: '',
+};
+
 const getClaimAgeDays = (submittedAt) => {
   if (!submittedAt) return null;
   const d = new Date(submittedAt);
@@ -102,17 +116,10 @@ export default function Billing() {
   const [corporates, setCorporates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [quickClaimLoadingId, setQuickClaimLoadingId] = useState('');
-  const [filters, setFilters] = useState({
-    dateFrom: '',
-    dateTo: '',
-    doctorId: '',
-    isPaid: '',
-    billingType: '',
-    claimStatus: '',
-    claimPriority: '',
-    patientName: '',
-    patientPhone: '',
-  });
+  const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(25);
+  const [pagination, setPagination] = useState(null);
 
   const [detailAppt, setDetailAppt] = useState(null);
   const [billItems, setBillItems] = useState([]);
@@ -141,17 +148,23 @@ export default function Billing() {
     notes: '',
   });
 
-  const load = () => {
+  const load = (overrides = {}) => {
     setLoading(true);
-    const params = {};
-    if (filters.dateFrom) params.from = filters.dateFrom;
-    if (filters.dateTo) params.to = filters.dateTo;
-    if (filters.doctorId) params.doctorId = filters.doctorId;
-    if (filters.isPaid !== '') params.isPaid = filters.isPaid;
-    if (filters.billingType) params.billingType = filters.billingType;
-    if (filters.claimStatus) params.claimStatus = filters.claimStatus;
-    if (filters.patientName) params.patientName = filters.patientName;
-    if (filters.patientPhone) params.patientPhone = filters.patientPhone;
+    const targetPage = overrides.page ?? page;
+    const targetPerPage = overrides.perPage ?? perPage;
+    const nextFilters = overrides.filters ?? filters;
+    const params = {
+      page: targetPage,
+      per_page: targetPerPage,
+    };
+    if (nextFilters.dateFrom) params.from = nextFilters.dateFrom;
+    if (nextFilters.dateTo) params.to = nextFilters.dateTo;
+    if (nextFilters.doctorId) params.doctorId = nextFilters.doctorId;
+    if (nextFilters.isPaid !== '') params.isPaid = nextFilters.isPaid;
+    if (nextFilters.billingType) params.billingType = nextFilters.billingType;
+    if (nextFilters.claimStatus) params.claimStatus = nextFilters.claimStatus;
+    if (nextFilters.patientName) params.patientName = nextFilters.patientName;
+    if (nextFilters.patientPhone) params.patientPhone = nextFilters.patientPhone;
 
     Promise.all([appointmentAPI.getAll(params), doctorAPI.getAll(), corporateAPI.getAll({ isActive: true })])
       .then(([a, d, c]) => {
@@ -161,26 +174,64 @@ export default function Billing() {
         setAppointments(billed);
         setDoctors(d.data || []);
         setCorporates(c.data || []);
+        setPagination(a.pagination || null);
       })
       .finally(() => setLoading(false));
   };
 
   useEffect(load, []);
 
-  const applyFilters = () => load();
+  const applyFilters = () => {
+    setPage(1);
+    load({ page: 1 });
+  };
   const resetFilters = () => {
-    setFilters({
-      dateFrom: '',
-      dateTo: '',
-      doctorId: '',
-      isPaid: '',
-      billingType: '',
-      claimStatus: '',
-      claimPriority: '',
-      patientName: '',
-      patientPhone: '',
-    });
-    setTimeout(load, 0);
+    const cleared = { ...DEFAULT_FILTERS };
+    setFilters(cleared);
+    setPage(1);
+    setTimeout(() => load({ filters: cleared, page: 1 }), 0);
+  };
+
+  const [exporting, setExporting] = useState(false);
+  const handleExportCSV = async () => {
+    setExporting(true);
+    try {
+      const params = { paginate: 'false' };
+      if (filters.dateFrom) params.from = filters.dateFrom;
+      if (filters.dateTo) params.to = filters.dateTo;
+      if (filters.doctorId) params.doctorId = filters.doctorId;
+      if (filters.isPaid !== '') params.isPaid = filters.isPaid;
+      if (filters.billingType) params.billingType = filters.billingType;
+      if (filters.claimStatus) params.claimStatus = filters.claimStatus;
+      if (filters.patientName) params.patientName = filters.patientName;
+      if (filters.patientPhone) params.patientPhone = filters.patientPhone;
+      const res = await appointmentAPI.getAll(params);
+      const rows = (res.data || []).filter((r) =>
+        Number(r.fee || 0) > 0 || Number(r.treatmentBill || 0) > 0 || r.isPaid || r.billingType === 'insurance'
+      );
+      const csvCols = [
+        { label: 'Apt #', key: (r) => r.appointmentNumber || '' },
+        { label: 'Date', key: (r) => r.appointmentDate || '' },
+        { label: 'Patient', key: (r) => r.patient?.name || '' },
+        { label: 'Patient ID', key: (r) => r.patient?.patientId || '' },
+        { label: 'Doctor', key: (r) => r.doctor ? `Dr. ${r.doctor.name}` : '' },
+        { label: 'Fee (Rs)', key: (r) => r.fee || 0 },
+        { label: 'Treatment Bill (Rs)', key: (r) => r.treatmentBill || 0 },
+        { label: 'Total (Rs)', key: (r) => (Number(r.fee || 0) + Number(r.treatmentBill || 0)).toFixed(2) },
+        { label: 'Paid', key: (r) => r.isPaid ? 'Yes' : 'No' },
+        { label: 'Billing Type', key: (r) => r.billingType || 'self_pay' },
+        { label: 'Claim Status', key: (r) => r.claimStatus || '' },
+        { label: 'Insurance Provider', key: (r) => r.insuranceProvider || '' },
+        { label: 'Policy #', key: (r) => r.policyNumber || '' },
+        { label: 'Claim Amount (Rs)', key: (r) => r.claimAmount || '' },
+        { label: 'Approved Amount (Rs)', key: (r) => r.approvedAmount || '' },
+      ];
+      exportToCSV(rows, csvCols, 'billing');
+    } catch {
+      // silent fail - toast not imported here for now
+    } finally {
+      setExporting(false);
+    }
   };
 
   const totalBilled = appointments.reduce((s, a) => s + Number(a.fee || 0) + Number(a.treatmentBill || 0), 0);
@@ -444,7 +495,7 @@ export default function Billing() {
       <div className={styles.pageHeader}>
         <div>
           <h2 className={styles.pageTitle}>Billing</h2>
-          <p className={styles.pageSubtitle}>{appointments.length} billing records</p>
+          <p className={styles.pageSubtitle}>{pagination?.total ?? appointments.length} billing records</p>
         </div>
       </div>
 
@@ -497,6 +548,9 @@ export default function Billing() {
         </select>
         <button className={styles.btnPrimary} onClick={applyFilters}>Apply</button>
         <button className={styles.btnSecondary} onClick={resetFilters}>Reset</button>
+        <button className={styles.btnSecondary} onClick={handleExportCSV} disabled={exporting} title="Export filtered billing records to CSV">
+          {exporting ? 'Exporting...' : 'Export CSV'}
+        </button>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(160px, 1fr))', gap: 14, marginBottom: 20 }}>
@@ -629,101 +683,115 @@ export default function Billing() {
             <div style={{ fontSize: 40, marginBottom: 10 }}>No records</div>
           </div>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid #e2e8f0', background: '#f8fafc' }}>
-                {['Apt #', 'Patient', 'Doctor', 'Date', 'Payer', 'Claim', 'Total', 'Payment', 'Actions'].map((h) => (
-                  <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#64748b', fontSize: 12 }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {appointments.map((appt) => {
-                const total = Number(appt.fee || 0) + Number(appt.treatmentBill || 0);
-                return (
-                  <tr key={appt.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                    <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontSize: 12, color: '#64748b' }}>{appt.appointmentNumber}</td>
-                    <td style={{ padding: '10px 12px' }}>
-                      <div style={{ fontWeight: 600, color: '#1e293b' }}>{appt.patient?.name || '-'}</div>
-                      <div style={{ fontSize: 11, color: '#94a3b8' }}>{appt.patient?.patientId || '-'}</div>
-                      {(Array.isArray(appt.patient?.clinicalAlerts) && appt.patient.clinicalAlerts.length > 0) && (
-                        <div style={{ marginTop: 3 }}>
-                          <span style={{ background: '#fee2e2', color: '#b91c1c', borderRadius: 999, fontSize: 10, fontWeight: 700, padding: '1px 7px' }}>
-                            Alert: {appt.patient.clinicalAlerts[0]}
-                          </span>
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ padding: '10px 12px', color: '#475569' }}>{appt.doctor ? `Dr. ${appt.doctor.name}` : '-'}</td>
-                    <td style={{ padding: '10px 12px', color: '#475569' }}>{appt.appointmentDate}</td>
-                    <td style={{ padding: '10px 12px', color: '#475569' }}>{(appt.billingType || 'self_pay').replace('_', ' ')}</td>
-                    <td style={{ padding: '10px 12px', color: '#475569' }}>
-                      {appt.billingType === 'insurance' ? (
-                        <>
-                          <div>{(appt.claimStatus || 'na').replace('_', ' ')}</div>
-                          <div style={{ fontSize: 11, color: '#94a3b8' }}>
-                            {appt.claimSubmittedAt ? `Submitted: ${appt.claimSubmittedAt}` : 'Not submitted'}
+          <>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #e2e8f0', background: '#f8fafc' }}>
+                  {['Apt #', 'Patient', 'Doctor', 'Date', 'Payer', 'Claim', 'Total', 'Payment', 'Actions'].map((h) => (
+                    <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#64748b', fontSize: 12 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {appointments.map((appt) => {
+                  const total = Number(appt.fee || 0) + Number(appt.treatmentBill || 0);
+                  return (
+                    <tr key={appt.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontSize: 12, color: '#64748b' }}>{appt.appointmentNumber}</td>
+                      <td style={{ padding: '10px 12px' }}>
+                        <div style={{ fontWeight: 600, color: '#1e293b' }}>{appt.patient?.name || '-'}</div>
+                        <div style={{ fontSize: 11, color: '#94a3b8' }}>{appt.patient?.patientId || '-'}</div>
+                        {(Array.isArray(appt.patient?.clinicalAlerts) && appt.patient.clinicalAlerts.length > 0) && (
+                          <div style={{ marginTop: 3 }}>
+                            <span style={{ background: '#fee2e2', color: '#b91c1c', borderRadius: 999, fontSize: 10, fontWeight: 700, padding: '1px 7px' }}>
+                              Alert: {appt.patient.clinicalAlerts[0]}
+                            </span>
                           </div>
+                        )}
+                      </td>
+                      <td style={{ padding: '10px 12px', color: '#475569' }}>{appt.doctor ? `Dr. ${appt.doctor.name}` : '-'}</td>
+                      <td style={{ padding: '10px 12px', color: '#475569' }}>{appt.appointmentDate}</td>
+                      <td style={{ padding: '10px 12px', color: '#475569' }}>{(appt.billingType || 'self_pay').replace('_', ' ')}</td>
+                      <td style={{ padding: '10px 12px', color: '#475569' }}>
+                        {appt.billingType === 'insurance' ? (
+                          <>
+                            <div>{(appt.claimStatus || 'na').replace('_', ' ')}</div>
+                            <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                              {appt.claimSubmittedAt ? `Submitted: ${appt.claimSubmittedAt}` : 'Not submitted'}
+                            </div>
+                            {(() => {
+                              const followUp = getClaimFollowUpMeta(appt.claimStatus || 'na', appt.claimSubmittedAt);
+                              const meta = CLAIM_PRIORITY_META[followUp.priority || 'unknown'];
+                              return (
+                                <div style={{ marginTop: 3 }}>
+                                  <span style={{ background: meta.bg, color: meta.color, borderRadius: 999, padding: '1px 7px', fontSize: 10, fontWeight: 700 }}>
+                                    {meta.label}
+                                  </span>
+                                </div>
+                              );
+                            })()}
+                          </>
+                        ) : '-'}
+                      </td>
+                      <td style={{ padding: '10px 12px', fontWeight: 700, color: '#1e293b' }}>{fmt(total)}</td>
+                      <td style={{ padding: '10px 12px' }}>
+                        <span
+                          style={{
+                            display: 'inline-block',
+                            padding: '2px 10px',
+                            borderRadius: 20,
+                            fontSize: 11,
+                            fontWeight: 600,
+                            background:appt.isPaid ? '#dcfce7' : '#fef3c7',
+                            color:appt.isPaid ? '#16a34a' : '#b45309',
+                          }}
+                        >
+                          {appt.isPaid ? 'Paid' : 'Unpaid'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px 12px' }}>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          <button className={styles.btnSecondary} onClick={() => openDetail(appt)}>View</button>
+                          <button className={styles.btnWarning} onClick={() => openClaimModal(appt)}>Claim</button>
                           {(() => {
-                            const followUp = getClaimFollowUpMeta(appt.claimStatus || 'na', appt.claimSubmittedAt);
-                            const meta = CLAIM_PRIORITY_META[followUp.priority || 'unknown'];
+                            const next = getNextQuickClaimStatus(appt);
+                            if (!next) return null;
                             return (
-                              <div style={{ marginTop: 3 }}>
-                                <span style={{ background: meta.bg, color: meta.color, borderRadius: 999, padding: '1px 7px', fontSize: 10, fontWeight: 700 }}>
-                                  {meta.label}
-                                </span>
-                              </div>
+                              <button
+                                className={styles.btnEdit}
+                                onClick={(e) => quickTransitionClaim(appt, next, e)}
+                                disabled={quickClaimLoadingId === appt.id}
+                              >
+                                {quickClaimLoadingId === appt.id ? 'Saving...' : QUICK_STATUS_LABEL[next] || 'Next Step'}
+                              </button>
                             );
                           })()}
-                        </>
-                      ) : '-'}
-                    </td>
-                    <td style={{ padding: '10px 12px', fontWeight: 700, color: '#1e293b' }}>{fmt(total)}</td>
-                    <td style={{ padding: '10px 12px' }}>
-                      <span
-                        style={{
-                          display: 'inline-block',
-                          padding: '2px 10px',
-                          borderRadius: 20,
-                          fontSize: 11,
-                          fontWeight: 600,
-                          background:appt.isPaid ? '#dcfce7' : '#fef3c7',
-                          color:appt.isPaid ? '#16a34a' : '#b45309',
-                        }}
-                      >
-                        {appt.isPaid ? 'Paid' : 'Unpaid'}
-                      </span>
-                    </td>
-                    <td style={{ padding: '10px 12px' }}>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        <button className={styles.btnSecondary} onClick={() => openDetail(appt)}>View</button>
-                        <button className={styles.btnWarning} onClick={() => openClaimModal(appt)}>Claim</button>
-                        {(() => {
-                          const next = getNextQuickClaimStatus(appt);
-                          if (!next) return null;
-                          return (
-                            <button
-                              className={styles.btnEdit}
-                              onClick={(e) => quickTransitionClaim(appt, next, e)}
-                              disabled={quickClaimLoadingId === appt.id}
-                            >
-                              {quickClaimLoadingId === appt.id ? 'Saving...' : QUICK_STATUS_LABEL[next] || 'Next Step'}
-                            </button>
-                          );
-                        })()}
-                        <button className={styles.btnPrimary} onClick={(e) => autoApplyPackage(appt, e)} disabled={applyingPackageId === appt.id}>
-                          {applyingPackageId === appt.id ? 'Applying...' : 'Apply Package'}
-                        </button>
-                        <button className={appt.isPaid ? styles.btnWarning : styles.btnSuccess} onClick={(e) => togglePaid(appt, e)}>
-                          {appt.isPaid ? 'Undo Paid' : 'Mark Paid'}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                          <button className={styles.btnPrimary} onClick={(e) => autoApplyPackage(appt, e)} disabled={applyingPackageId === appt.id}>
+                            {applyingPackageId === appt.id ? 'Applying...' : 'Apply Package'}
+                          </button>
+                          <button className={appt.isPaid ? styles.btnWarning : styles.btnSuccess} onClick={(e) => togglePaid(appt, e)}>
+                            {appt.isPaid ? 'Undo Paid' : 'Mark Paid'}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <PaginationControls
+              meta={pagination}
+              onPageChange={(next) => {
+                setPage(next);
+                load({ page: next });
+              }}
+              onPerPageChange={(value) => {
+                setPerPage(value);
+                setPage(1);
+                load({ page: 1, perPage: value });
+              }}
+            />
+          </>
         )}
       </div>
 

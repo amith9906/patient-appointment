@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { patientAPI, reportAPI, appointmentAPI, pdfAPI } from '../services/api';
+import { patientAPI, reportAPI, appointmentAPI, pdfAPI, ipdAPI, treatmentPlanAPI, packageAPI } from '../services/api';
 import Badge from '../components/Badge';
 import Table from '../components/Table';
 import Modal from '../components/Modal';
@@ -10,6 +10,7 @@ import styles from './Page.module.css';
 export default function PatientDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const todayStr = () => new Date().toISOString().slice(0, 10);
   const [patient, setPatient] = useState(null);
   const [reports, setReports] = useState([]);
   const [tab, setTab] = useState('info');
@@ -19,13 +20,154 @@ export default function PatientDetail() {
   const [detailModal, setDetailModal] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [timelineData, setTimelineData] = useState([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [planModal, setPlanModal] = useState(false);
+  const [plans, setPlans] = useState([]);
+  const [plansLoading, setPlansLoading] = useState(false);
+  const [patientPackages, setPatientPackages] = useState([]);
+  const [packagesLoading, setPackagesLoading] = useState(false);
+  const [assignForm, setAssignForm] = useState({ packagePlanId: '', startDate: todayStr(), notes: '' });
+  const [assigning, setAssigning] = useState(false);
 
   useEffect(() => {
     patientAPI.getOne(id).then((r) => setPatient(r.data)).catch(() => navigate('/patients'));
     loadReports();
   }, [id]);
 
+  useEffect(() => {
+    if (patient?.id) {
+      loadPatientPackages(patient.id);
+    }
+  }, [patient?.id]);
+
   const loadReports = () => reportAPI.getByPatient(id).then((r) => setReports(r.data));
+
+  const loadPatientPackages = async (patientId) => {
+    if (!patientId) {
+      setPatientPackages([]);
+      return;
+    }
+    setPackagesLoading(true);
+    try {
+      const res = await packageAPI.getPatientAssignments(patientId);
+      setPatientPackages(Array.isArray(res.data) ? res.data : []);
+    } catch {
+      setPatientPackages([]);
+    } finally {
+      setPackagesLoading(false);
+    }
+  };
+
+  const loadTimeline = async () => {
+    setTimelineLoading(true);
+    try {
+      const [apptRes, ipdRes, planRes, repRes] = await Promise.all([
+        appointmentAPI.getAll({ patientId: id }),
+        ipdAPI.getAdmissions({ patientId: id }),
+        treatmentPlanAPI.getAll({ patientId: id }),
+        reportAPI.getByPatient(id),
+      ]);
+      const items = [];
+      (apptRes.data || []).forEach(a => items.push({
+        type: 'appointment', date: a.appointmentDate, id: a.id,
+        icon: '📅', color: '#2563eb', bg: '#dbeafe',
+        title: `Appointment — Dr. ${a.doctor?.name || 'Unknown'}`,
+        sub: a.type, badge: a.status,
+        details: [a.diagnosis && `Diagnosis: ${a.diagnosis}`, a.treatmentDone && `Treatment: ${a.treatmentDone}`].filter(Boolean),
+        raw: a,
+      }));
+      (ipdRes.data || []).forEach(a => {
+        const days = a.dischargeDate
+          ? Math.round((new Date(a.dischargeDate) - new Date(a.admissionDate)) / 86400000)
+          : Math.round((new Date() - new Date(a.admissionDate)) / 86400000);
+        items.push({
+          type: 'ipd', date: a.admissionDate, id: a.id,
+          icon: '🏨', color: '#ea580c', bg: '#ffedd5',
+          title: `IPD Admission — ${a.admissionNumber}`,
+          sub: `Dr. ${a.doctor?.name || 'Unknown'}`, badge: a.status,
+          details: [a.admissionDiagnosis && `Diagnosis: ${a.admissionDiagnosis}`, `${days} day(s)`].filter(Boolean),
+          raw: a,
+        });
+      });
+      (planRes.data || []).forEach(p => items.push({
+        type: 'plan', date: p.startDate || p.createdAt, id: p.id,
+        icon: '📋', color: '#7c3aed', bg: '#ede9fe',
+        title: `Treatment Plan — ${p.name}`,
+        sub: `Dr. ${p.doctor?.name || 'Unknown'}`, badge: p.status,
+        details: [`Sessions: ${p.completedSessions}/${p.totalSessions}`, p.totalAmount ? `₹${p.totalAmount}` : null].filter(Boolean),
+        raw: p,
+      }));
+      (repRes.data || []).forEach(r => items.push({
+        type: 'report', date: r.createdAt?.slice(0, 10), id: r.id,
+        icon: '📄', color: '#16a34a', bg: '#dcfce7',
+        title: r.title,
+        sub: r.type?.replace('_', ' '), badge: null,
+        details: [r.uploadedBy && `Uploaded by: ${r.uploadedBy}`, r.originalName].filter(Boolean),
+        raw: r,
+      }));
+      items.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+      setTimelineData(items);
+    } catch { /* silent */ }
+    finally { setTimelineLoading(false); }
+  };
+
+  const loadAvailablePlans = async () => {
+    setPlansLoading(true);
+    try {
+      const params = {};
+      if (patient?.hospitalId) params.hospitalId = patient.hospitalId;
+      const res = await packageAPI.getPlans(params);
+      setPlans(res.data || []);
+    } catch {
+      setPlans([]);
+    } finally {
+      setPlansLoading(false);
+    }
+  };
+
+  const openAssignModal = async () => {
+    if (!patient?.id) return;
+    setPlanModal(true);
+    if (!plans.length) await loadAvailablePlans();
+  };
+
+  const assignPackage = async (e) => {
+    e.preventDefault();
+    if (!assignForm.packagePlanId) {
+      return toast.error('Select a package plan');
+    }
+    if (!patient?.id) return;
+    setAssigning(true);
+    try {
+      await packageAPI.assignToPatient({
+        patientId: patient.id,
+        packagePlanId: assignForm.packagePlanId,
+        startDate: assignForm.startDate,
+        notes: assignForm.notes || null,
+      });
+      toast.success('Package assigned');
+      setPlanModal(false);
+      setAssignForm({ packagePlanId: '', startDate: todayStr(), notes: '' });
+      loadPatientPackages(patient.id);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Failed to assign package');
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  const handleConsumePackage = async (assignment) => {
+    const appointmentId = window.prompt('Appointment ID (optional):') || null;
+    const notes = window.prompt('Notes (optional):') || null;
+    try {
+      await packageAPI.consumeVisit(assignment.id, { appointmentId, notes });
+      toast.success('Package visit consumed');
+      loadPatientPackages(patient?.id);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Failed to record visit');
+    }
+  };
 
   const handleUpload = async (e) => {
     e.preventDefault();
@@ -137,10 +279,10 @@ export default function PatientDetail() {
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 20, borderBottom: '1px solid #e2e8f0', paddingBottom: 0 }}>
-        {['info', 'appointments', 'reports'].map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            style={{ padding: '8px 20px', border: 'none', borderBottom:tab === t ? '3px solid #2563eb' : '3px solid transparent', background: 'none', fontWeight: 600, fontSize: 14, color:tab === t ? '#2563eb' : '#64748b', cursor: 'pointer' }}>
-            {t.charAt(0).toUpperCase() + t.slice(1)}
+        {[['info','Info'],['appointments','Appointments'],['reports','Reports'],['timeline','Timeline']].map(([t, label]) => (
+          <button key={t} onClick={() => { setTab(t); if (t === 'timeline' && timelineData.length === 0) loadTimeline(); }}
+            style={{ padding: '8px 20px', border: 'none', borderBottom: tab === t ? '3px solid #2563eb' : '3px solid transparent', background: 'none', fontWeight: 600, fontSize: 14, color: tab === t ? '#2563eb' : '#64748b', cursor: 'pointer' }}>
+            {label}
           </button>
         ))}
       </div>
@@ -203,6 +345,41 @@ export default function PatientDetail() {
               </div>
             </div>
           )}
+          <div style={{ marginTop: 32 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Package assignments</h3>
+              <button className={styles.btnPrimary} onClick={openAssignModal}>+ Assign Package</button>
+            </div>
+            {packagesLoading ? (
+              <div className={styles.stripItem} style={{ borderStyle: 'dashed' }}>Loading packages…</div>
+            ) : patientPackages.length > 0 ? (
+              <div className={styles.strip}>
+                {patientPackages.map((pkg) => {
+                  const totalVisits = Number(pkg.totalVisits || 0);
+                  const usedVisits = Number(pkg.usedVisits || 0);
+                  const remaining = Math.max(totalVisits - usedVisits, 0);
+                  const status = String(pkg.status || 'unknown').toUpperCase();
+                  return (
+                    <div key={pkg.id} className={styles.stripItem}>
+                      <div className={styles.stripLabel}>{pkg.plan?.name || 'Package'}</div>
+                      <div className={styles.stripValue}>{`${usedVisits}/${totalVisits} used`}</div>
+                      <div className={styles.stripNote}>
+                        {`${remaining} remaining • ${status}`}
+                        {pkg.expiryDate ? ` • Expires ${formatDate(pkg.expiryDate)}` : ''}
+                      </div>
+                      {pkg.status === 'active' && remaining > 0 && (
+                        <button className={styles.btnSecondary} style={{ marginTop: 10 }} onClick={() => handleConsumePackage(pkg)}>
+                          Record visit
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-sm text-gray-500">No packages assigned yet.</div>
+            )}
+          </div>
         </div>
       )}
 
@@ -219,6 +396,109 @@ export default function PatientDetail() {
           <div className={styles.card}><Table columns={reportCols} data={reports} loading={false} emptyMessage="No reports uploaded" /></div>
         </div>
       )}
+
+      {tab === 'timeline' && (
+        <div>
+          <div className={styles.pageHeader} style={{ marginBottom: 16 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600 }}>Patient Timeline</h3>
+            <button className={styles.btnSecondary} onClick={loadTimeline} disabled={timelineLoading}>
+              {timelineLoading ? 'Loading...' : '↺ Refresh'}
+            </button>
+          </div>
+          {timelineLoading ? (
+            <div style={{ padding: 48, textAlign: 'center', color: '#64748b' }}>Loading timeline...</div>
+          ) : timelineData.length === 0 ? (
+            <div style={{ padding: 48, textAlign: 'center', color: '#94a3b8' }}>No timeline data found.</div>
+          ) : (
+            <div style={{ position: 'relative', paddingLeft: 32 }}>
+              <div style={{ position: 'absolute', left: 15, top: 0, bottom: 0, width: 2, background: '#e2e8f0' }} />
+              {timelineData.map((item, idx) => (
+                <div key={`${item.type}-${item.id}-${idx}`} style={{ position: 'relative', marginBottom: 20 }}>
+                  <div style={{
+                    position: 'absolute', left: -24, top: 14, width: 20, height: 20,
+                    borderRadius: '50%', background: item.color, display: 'flex', alignItems: 'center',
+                    justifyContent: 'center', fontSize: 11, zIndex: 1,
+                  }}>
+                    <span>{item.icon}</span>
+                  </div>
+                  <div style={{
+                    background: '#fff', border: `1px solid #e2e8f0`, borderLeft: `4px solid ${item.color}`,
+                    borderRadius: 8, padding: '12px 16px',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 700, fontSize: 14, color: '#1e293b' }}>{item.title}</span>
+                      {item.badge && (
+                        <span style={{
+                          background: item.bg, color: item.color, borderRadius: 999,
+                          fontSize: 11, fontWeight: 700, padding: '2px 8px',
+                        }}>{item.badge}</span>
+                      )}
+                      <span style={{ marginLeft: 'auto', fontSize: 12, color: '#94a3b8' }}>
+                        {item.date ? new Date(item.date).toLocaleDateString() : ''}
+                      </span>
+                    </div>
+                    {item.sub && <div style={{ fontSize: 13, color: '#64748b', marginTop: 2 }}>{item.sub}</div>}
+                    {item.details.length > 0 && (
+                      <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                        {item.details.map((d, i) => (
+                          <span key={i} style={{ fontSize: 12, background: '#f1f5f9', borderRadius: 4, padding: '2px 8px', color: '#475569' }}>{d}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <Modal isOpen={planModal} onClose={() => setPlanModal(false)} title="Assign Package to Patient">
+        <form onSubmit={assignPackage} className={styles.form}>
+          <div className={styles.grid2}>
+            <div className={styles.field}>
+              <label className={styles.label}>Package Plan</label>
+              <select
+                className={styles.input}
+                value={assignForm.packagePlanId}
+                onChange={(e) => setAssignForm((f) => ({ ...f, packagePlanId: e.target.value }))}
+              >
+                <option value="">Select a plan</option>
+                {plans.map((plan) => (
+                  <option key={plan.id} value={plan.id}>
+                    {plan.name} • {plan.totalVisits} visits • Rs {plan.price}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label}>Start Date</label>
+              <input
+                type="date"
+                className={styles.input}
+                value={assignForm.startDate}
+                onChange={(e) => setAssignForm((f) => ({ ...f, startDate: e.target.value }))}
+              />
+            </div>
+          </div>
+          <div className={styles.field}>
+            <label className={styles.label}>Notes</label>
+            <textarea
+              className={styles.input}
+              rows={2}
+              value={assignForm.notes}
+              onChange={(e) => setAssignForm((f) => ({ ...f, notes: e.target.value }))}
+            />
+          </div>
+          <div className={styles.formActions}>
+            <button type="button" className={styles.btnSecondary} onClick={() => setPlanModal(false)}>Cancel</button>
+            <button type="submit" className={styles.btnPrimary} disabled={assigning || plansLoading}>
+              {assigning ? 'Assigning…' : 'Assign Package'}
+            </button>
+          </div>
+          {plansLoading && <div className="text-sm text-gray-500 mt-2">Loading available plans…</div>}
+        </form>
+      </Modal>
 
       <Modal isOpen={uploadModal} onClose={() => setUploadModal(false)} title="Upload Patient Report">
         <form onSubmit={handleUpload} className={styles.form}>

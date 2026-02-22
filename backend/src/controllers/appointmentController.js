@@ -8,9 +8,27 @@ const {
   Vitals,
   BillItem,
   CorporateAccount,
+  PatientPackage,
+  PackagePlan,
+  DoctorAvailability,
+  IPDPayment,
+  IPDAdmission,
+  DoctorLeave,
+  MedicineInvoice,
+  TreatmentPlan,
+  Department,
 } = require('../models');
 const { Op } = require('sequelize');
 const { ensureScopedHospital, isSuperAdmin } = require('../utils/accessScope');
+const { ensurePackageAssignable } = require('../utils/packageAssignment');
+const {
+  DAY_NAMES,
+  toMinutes,
+  ensureScheduleForDay,
+  fetchSchedules,
+  findScheduleForTime,
+} = require('../utils/availability');
+const { getPaginationParams, buildPaginationMeta, applyPaginationOptions } = require('../utils/pagination');
 
 const CLAIM_TRANSITIONS = {
   na: ['submitted'],
@@ -19,6 +37,73 @@ const CLAIM_TRANSITIONS = {
   approved: ['settled', 'rejected'],
   rejected: ['submitted'],
   settled: [],
+};
+
+const NON_ACTIVE_STATUSES = ['cancelled', 'no_show'];
+
+const toNullableUuid = (value) => {
+  if (value == null) return null;
+  const normalized = String(value).trim();
+  return normalized || null;
+};
+
+const getScheduleForAppointment = async (doctor, date, time) => {
+  if (!doctor) return null;
+  if (!date || !time) return null;
+  const dayOfWeek = new Date(`${date}T00:00:00`).getDay();
+  const dbSchedules = await fetchSchedules(doctor.id, dayOfWeek);
+  const schedules = ensureScheduleForDay(doctor, dayOfWeek, dbSchedules);
+  if (!schedules.length) return null;
+  const normalizedTime = String(time || '').slice(0, 5);
+  const timeMinutes = toMinutes(normalizedTime);
+  const rule = findScheduleForTime(schedules, timeMinutes);
+  if (!rule) return null;
+  return { rule, normalizedTime };
+};
+
+const checkSlotCapacity = async ({ doctor, date, time, excludeAppointmentId = null }) => {
+  const scheduleInfo = await getScheduleForAppointment(doctor, date, time);
+  if (!scheduleInfo) {
+    throw new Error('Doctor is not available at the selected date/time');
+  }
+  // Check if doctor is on leave for the given date
+  const leave = await DoctorLeave.findOne({ where: { doctorId: doctor.id, leaveDate: date } });
+  if (leave) {
+    if (leave.isFullDay) {
+      throw new Error('Doctor is on leave on the selected date');
+    }
+    // Partial day leave: check if appointment time falls within leave window
+    if (leave.startTime && leave.endTime) {
+      const apptMins = toMinutes(scheduleInfo.normalizedTime);
+      const leaveMins = toMinutes(leave.startTime.slice(0, 5));
+      const leaveEndMins = toMinutes(leave.endTime.slice(0, 5));
+      if (apptMins >= leaveMins && apptMins < leaveEndMins) {
+        throw new Error('Doctor is on leave at the selected time');
+      }
+    }
+  }
+  const maxPerSlot = Number(scheduleInfo.rule.maxAppointmentsPerSlot || 1);
+  const where = {
+    doctorId: doctor.id,
+    appointmentDate: date,
+    appointmentTime: scheduleInfo.normalizedTime,
+    status: { [Op.notIn]: NON_ACTIVE_STATUSES },
+  };
+  if (excludeAppointmentId) {
+    where.id = { [Op.ne]: excludeAppointmentId };
+  }
+  const existing = await Appointment.count({ where });
+  if (existing >= maxPerSlot) {
+    throw new Error('Time slot capacity reached');
+  }
+  return scheduleInfo.normalizedTime;
+};
+
+const PACKAGE_INCLUDE = {
+  model: PatientPackage,
+  as: 'packageAssignment',
+  attributes: ['id', 'packagePlanId', 'status', 'usedVisits', 'totalVisits', 'expiryDate'],
+  include: [{ model: PackagePlan, as: 'plan', attributes: ['id', 'name', 'serviceType'] }],
 };
 
 function canTransitionClaimStatus(from, to) {
@@ -44,6 +129,9 @@ exports.getAll = async (req, res) => {
       patientPhone,
       billingType,
       claimStatus,
+      followUp,
+      followUpFrom,
+      followUpTo,
     } = req.query;
     const where = {};
     if (doctorId) where.doctorId = doctorId;
@@ -57,6 +145,14 @@ exports.getAll = async (req, res) => {
     else if (from && to) where.appointmentDate = { [Op.between]: [from, to] };
     else if (from) where.appointmentDate = { [Op.gte]: from };
     else if (to) where.appointmentDate = { [Op.lte]: to };
+    // Follow-up filters
+    if (followUp === 'true') {
+      where.followUpDate = { [Op.ne]: null };
+    } else if (followUpFrom || followUpTo) {
+      where.followUpDate = {};
+      if (followUpFrom) where.followUpDate[Op.gte] = followUpFrom;
+      if (followUpTo) where.followUpDate[Op.lte] = followUpTo;
+    }
 
     const patientInclude = {
       model: Patient,
@@ -71,7 +167,8 @@ exports.getAll = async (req, res) => {
       patientInclude.required = true;
     }
 
-    const appointments = await Appointment.findAll({
+    const pagination = getPaginationParams(req, { defaultPerPage: 20, forcePaginate: req.query.paginate !== 'false' });
+    const baseOptions = {
       where,
       include: [
         {
@@ -81,10 +178,20 @@ exports.getAll = async (req, res) => {
           ...(isSuperAdmin(req.user) ? {} : { where: { hospitalId: scope.hospitalId } }),
         },
         patientInclude,
+        PACKAGE_INCLUDE,
         { model: CorporateAccount, as: 'corporateAccount', attributes: ['id', 'name', 'accountCode', 'creditDays'] },
       ],
       order: [['appointmentDate', 'DESC'], ['appointmentTime', 'DESC']],
-    });
+    };
+    if (pagination) {
+      const queryOptions = applyPaginationOptions(baseOptions, pagination, { forceDistinct: true });
+      const appointments = await Appointment.findAndCountAll(queryOptions);
+      return res.json({
+        data: appointments.rows,
+        meta: buildPaginationMeta(pagination, appointments.count),
+      });
+    }
+    const appointments = await Appointment.findAll(baseOptions);
     res.json(appointments);
   } catch (err) { res.status(500).json({ message: err.message }); }
 };
@@ -172,6 +279,7 @@ exports.getOne = async (req, res) => {
       include: [
         { model: Doctor, as: 'doctor' },
         { model: Patient, as: 'patient' },
+        PACKAGE_INCLUDE,
         { model: CorporateAccount, as: 'corporateAccount' },
         { model: Prescription, as: 'prescriptions', include: [{ model: Medication, as: 'medication' }] },
         { model: Vitals, as: 'vitals' },
@@ -201,23 +309,27 @@ exports.create = async (req, res) => {
     if (doctor.hospitalId !== patient.hospitalId) {
       return res.status(400).json({ message: 'Doctor and patient must belong to same hospital' });
     }
+    const packageAssignment = await ensurePackageAssignable(req.body.patientPackageId || null, patient.id, patient.hospitalId);
 
-    // Check for conflict
-    const conflict = await Appointment.findOne({
-      where: {
-        doctorId: req.body.doctorId,
-        appointmentDate: req.body.appointmentDate,
-        appointmentTime: req.body.appointmentTime,
-        status: { [Op.notIn]: ['cancelled', 'no_show'] },
-      },
+    const normalizedTime = await checkSlotCapacity({
+      doctor,
+      date: req.body.appointmentDate,
+      time: req.body.appointmentTime,
     });
-    if (conflict) return res.status(400).json({ message: 'Time slot already booked' });
-
-    const appt = await Appointment.create(req.body);
+    const payload = {
+      ...req.body,
+      patientId: patient.id,
+      doctorId: doctor.id,
+      appointmentTime: normalizedTime,
+      patientPackageId: packageAssignment ? packageAssignment.id : null,
+      corporateAccountId: toNullableUuid(req.body.corporateAccountId),
+    };
+    const appt = await Appointment.create(payload);
     const full = await Appointment.findByPk(appt.id, {
       include: [
         { model: Doctor, as: 'doctor', attributes: ['id', 'name', 'specialization'] },
         { model: Patient, as: 'patient', attributes: ['id', 'name', 'patientId', 'phone'] },
+        PACKAGE_INCLUDE,
       ],
     });
     res.status(201).json(full);
@@ -232,7 +344,9 @@ exports.update = async (req, res) => {
     const appt = await Appointment.findByPk(req.params.id);
     if (!appt) return res.status(404).json({ message: 'Appointment not found' });
 
-    const doctor = await Doctor.findByPk(appt.doctorId, { attributes: ['hospitalId'] });
+    const doctor = await Doctor.findByPk(appt.doctorId, {
+      attributes: ['id', 'hospitalId', 'availableDays', 'availableFrom', 'availableTo'],
+    });
     if (!isSuperAdmin(req.user) && doctor?.hospitalId !== scope.hospitalId) {
       return res.status(403).json({ message: 'Access denied for this hospital appointment' });
     }
@@ -241,21 +355,42 @@ exports.update = async (req, res) => {
     const nextDate = req.body.appointmentDate || appt.appointmentDate;
     const nextTime = req.body.appointmentTime || appt.appointmentTime;
     const nextStatus = req.body.status || appt.status;
-
-    if (!['cancelled', 'no_show'].includes(nextStatus)) {
-      const conflict = await Appointment.findOne({
-        where: {
-          id: { [Op.ne]: appt.id },
-          doctorId: nextDoctorId,
-          appointmentDate: nextDate,
-          appointmentTime: nextTime,
-          status: { [Op.notIn]: ['cancelled', 'no_show'] },
-        },
+    const targetDoctor = nextDoctorId === doctor.id
+      ? doctor
+      : await Doctor.findByPk(nextDoctorId, {
+        attributes: ['id', 'hospitalId', 'availableDays', 'availableFrom', 'availableTo'],
       });
-      if (conflict) return res.status(400).json({ message: 'Time slot already booked' });
+    if (!targetDoctor) return res.status(404).json({ message: 'Doctor not found' });
+    if (!isSuperAdmin(req.user) && targetDoctor.hospitalId !== scope.hospitalId) {
+      return res.status(403).json({ message: 'Access denied for this hospital appointment' });
     }
 
-    await appt.update(req.body);
+    const payload = {
+      ...req.body,
+      doctorId: nextDoctorId,
+      corporateAccountId: toNullableUuid(req.body.corporateAccountId),
+    };
+    if (!['cancelled', 'no_show'].includes(nextStatus)) {
+      const normalizedTime = await checkSlotCapacity({
+        doctor: targetDoctor,
+        date: nextDate,
+        time: nextTime,
+        excludeAppointmentId: appt.id,
+      });
+      payload.appointmentTime = normalizedTime;
+      payload.appointmentDate = nextDate;
+    }
+
+    if (!['cancelled', 'no_show'].includes(nextStatus) && normalizedTime) {
+      payload.appointmentTime = normalizedTime;
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'patientPackageId')) {
+      const patient = await Patient.findByPk(appt.patientId, { attributes: ['id', 'hospitalId'] });
+      const nextAssignmentId = payload.patientPackageId || null;
+      const validatedAssignment = await ensurePackageAssignable(nextAssignmentId, patient.id, patient.hospitalId);
+      payload.patientPackageId = validatedAssignment ? validatedAssignment.id : null;
+    }
+    await appt.update(payload);
     res.json(appt);
   } catch (err) { res.status(400).json({ message: err.message }); }
 };
@@ -297,6 +432,7 @@ exports.getTodayAppointments = async (req, res) => {
           ...(isSuperAdmin(req.user) ? {} : { where: { hospitalId: scope.hospitalId } }),
         },
         { model: Patient, as: 'patient', attributes: ['id', 'name', 'patientId', 'phone'] },
+        PACKAGE_INCLUDE,
       ],
       order: [['appointmentDate', 'DESC'], ['appointmentTime', 'DESC']],
     });
@@ -327,15 +463,34 @@ exports.getQueue = async (req, res) => {
       ...(isSuperAdmin(req.user) ? {} : { where: { hospitalId: scope.hospitalId } }),
     };
 
-    const appointments = await Appointment.findAll({
+    const pagination = getPaginationParams(req, { defaultPerPage: 25, forcePaginate: true });
+    const baseOptions = {
       where,
       include: [
         doctorInclude,
         { model: Patient, as: 'patient', attributes: ['id', 'name', 'patientId', 'phone'] },
+        PACKAGE_INCLUDE,
       ],
       order: [['appointmentTime', 'ASC'], ['createdAt', 'ASC']],
-    });
+    };
+    if (pagination) {
+      const queryOptions = applyPaginationOptions(baseOptions, pagination, { forceDistinct: true });
+      const queueResult = await Appointment.findAndCountAll(queryOptions);
+      const items = queueResult.rows.map((appt, idx) => ({
+        ...appt.toJSON(),
+        queueToken: pagination.offset + idx + 1,
+      }));
+      return res.json({
+        data: {
+          date: queueDate,
+          total: queueResult.count,
+          items,
+        },
+        meta: buildPaginationMeta(pagination, queueResult.count),
+      });
+    }
 
+    const appointments = await Appointment.findAll(baseOptions);
     const items = appointments.map((appt, idx) => ({
       ...appt.toJSON(),
       queueToken: idx + 1,
@@ -618,6 +773,14 @@ exports.getBillingAnalytics = async (req, res) => {
       .map(c => ({ ...c, total: parseFloat(c.total.toFixed(2)) }))
       .sort((a, b) => b.total - a.total);
 
+    // Add IPD revenue
+    const ipdWhere = {};
+    if (!isSuperAdmin(req.user)) ipdWhere.hospitalId = scope.hospitalId;
+    if (from && to) ipdWhere.paymentDate = { [Op.between]: [from, to] };
+    else if (from) ipdWhere.paymentDate = { [Op.gte]: from };
+    else if (to) ipdWhere.paymentDate = { [Op.lte]: to };
+    const ipdRevenue = parseFloat((await IPDPayment.sum('amount', { where: ipdWhere })) || 0);
+
     res.json({
       summary: {
         totalBills,
@@ -652,6 +815,123 @@ exports.getBillingAnalytics = async (req, res) => {
       weekWise,
       monthWise,
       categoryWise,
+      ipdRevenue,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.getRevenueOverview = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+
+    const { from, to } = req.query;
+    const isSA = isSuperAdmin(req.user);
+    const hFilter = isSA ? {} : { hospitalId: scope.hospitalId };
+
+    const dateWhere = (field) => {
+      if (from && to) return { [field]: { [Op.between]: [from, to] } };
+      if (from) return { [field]: { [Op.gte]: from } };
+      if (to) return { [field]: { [Op.lte]: to } };
+      return {};
+    };
+
+    // OPD appointments with department chain
+    const deptInclude = [{ model: Department, as: 'department', attributes: ['id', 'name'] }];
+    const doctorInc = {
+      model: Doctor,
+      as: 'doctor',
+      attributes: ['id', 'departmentId'],
+      include: deptInclude,
+      ...(isSA ? {} : { where: { hospitalId: scope.hospitalId } }),
+    };
+
+    const appointments = await Appointment.findAll({
+      where: { status: { [Op.notIn]: ['cancelled', 'no_show'] }, ...dateWhere('appointmentDate') },
+      attributes: ['fee', 'treatmentBill'],
+      include: [doctorInc],
+    });
+
+    const opdConsultation = appointments.reduce((s, a) => s + Number(a.fee || 0), 0);
+    const opdTreatment = appointments.reduce((s, a) => s + Number(a.treatmentBill || 0), 0);
+    const opdTotal = opdConsultation + opdTreatment;
+
+    // IPD payments
+    const ipdPayWhere = { ...hFilter, ...dateWhere('paymentDate') };
+    const ipdRevenue = parseFloat((await IPDPayment.sum('amount', { where: ipdPayWhere })) || 0);
+
+    // Pharmacy (medicine invoices)
+    const pharmacyRevenue = parseFloat((await MedicineInvoice.sum('totalAmount', { where: { ...hFilter, ...dateWhere('invoiceDate') } })) || 0);
+
+    // Treatment plans
+    const treatmentRevenue = parseFloat((await TreatmentPlan.sum('totalAmount', { where: { ...hFilter, ...dateWhere('startDate') } })) || 0);
+
+    const grandTotal = opdTotal + ipdRevenue + pharmacyRevenue + treatmentRevenue;
+
+    // By source
+    const bySource = [
+      { source: 'OPD Consultation', amount: opdConsultation },
+      { source: 'OPD Treatment', amount: opdTreatment },
+      { source: 'IPD (Inpatient)', amount: ipdRevenue },
+      { source: 'Pharmacy', amount: pharmacyRevenue },
+      { source: 'Treatment Plans', amount: treatmentRevenue },
+    ].map((s) => ({
+      ...s,
+      amount: parseFloat(s.amount.toFixed(2)),
+      pct: grandTotal > 0 ? parseFloat(((s.amount / grandTotal) * 100).toFixed(1)) : 0,
+    }));
+
+    // Department breakdown: OPD
+    const deptMap = new Map();
+    appointments.forEach((a) => {
+      const dept = a.doctor?.department;
+      const key = dept?.id || 'unknown';
+      const name = dept?.name || 'No Department';
+      if (!deptMap.has(key)) deptMap.set(key, { deptId: key, deptName: name, opdRevenue: 0, ipdRevenue: 0 });
+      deptMap.get(key).opdRevenue += Number(a.fee || 0) + Number(a.treatmentBill || 0);
+    });
+
+    // Department breakdown: IPD (via IPDAdmission → Doctor → Department)
+    const ipdPaymentsWithDept = await IPDPayment.findAll({
+      where: ipdPayWhere,
+      attributes: ['amount'],
+      include: [{
+        model: IPDAdmission,
+        as: 'admission',
+        attributes: ['doctorId'],
+        include: [{
+          model: Doctor,
+          as: 'doctor',
+          attributes: ['departmentId'],
+          include: deptInclude,
+        }],
+      }],
+    });
+    ipdPaymentsWithDept.forEach((p) => {
+      const dept = p.admission?.doctor?.department;
+      const key = dept?.id || 'unknown';
+      const name = dept?.name || 'No Department';
+      if (!deptMap.has(key)) deptMap.set(key, { deptId: key, deptName: name, opdRevenue: 0, ipdRevenue: 0 });
+      deptMap.get(key).ipdRevenue += Number(p.amount || 0);
+    });
+
+    const byDepartment = Array.from(deptMap.values())
+      .map((d) => ({
+        ...d,
+        opdRevenue: parseFloat(d.opdRevenue.toFixed(2)),
+        ipdRevenue: parseFloat(d.ipdRevenue.toFixed(2)),
+        total: parseFloat((d.opdRevenue + d.ipdRevenue).toFixed(2)),
+      }))
+      .sort((a, b) => b.total - a.total);
+
+    res.json({
+      bySource,
+      byDepartment,
+      grandTotal: parseFloat(grandTotal.toFixed(2)),
+      breakdown: { opdTotal: parseFloat(opdTotal.toFixed(2)), ipdRevenue, pharmacyRevenue, treatmentRevenue },
+      range: { from: from || null, to: to || null },
     });
   } catch (err) {
     res.status(500).json({ message: err.message });

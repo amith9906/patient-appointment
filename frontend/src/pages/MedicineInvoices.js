@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   ResponsiveContainer,
   CartesianGrid,
@@ -19,6 +19,7 @@ import Table from '../components/Table';
 import Modal from '../components/Modal';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
+import PaginationControls from '../components/PaginationControls';
 
 const COLORS = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#dc2626', '#0891b2', '#64748b'];
 const currency = (val) => `Rs ${Number(val || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
@@ -124,6 +125,9 @@ export default function MedicineInvoices() {
   const [medications, setMedications] = useState([]);
   const [patients, setPatients] = useState([]);
   const [invoices, setInvoices] = useState([]);
+  const [invoicePage, setInvoicePage] = useState(1);
+  const [invoicePerPage, setInvoicePerPage] = useState(25);
+  const [invoicePagination, setInvoicePagination] = useState(null);
   const [analytics, setAnalytics] = useState(null);
   const [gstReport, setGstReport] = useState(null);
   const [gstLoading, setGstLoading] = useState(false);
@@ -166,18 +170,28 @@ export default function MedicineInvoices() {
   const [form, setForm] = useState(getEmptyInvoiceForm());
 
   const loadMaster = async () => {
-    const [medRes, patRes] = await Promise.all([medicationAPI.getAll(), patientAPI.getAll()]);
+    const [medRes, patRes] = await Promise.all([medicationAPI.getAll(), patientAPI.getAll({ paginate: 'false' })]);
     setMedications(medRes.data || []);
     setPatients(patRes.data || []);
   };
 
-  const loadInvoices = async () => {
-    const params = {};
-    if (from) params.from = from;
-    if (to) params.to = to;
+  const loadInvoices = useCallback(async (overrides = {}) => {
+    const targetPage = overrides.page ?? invoicePage;
+    const targetPerPage = overrides.perPage ?? invoicePerPage;
+    const nextFrom = overrides.from ?? from;
+    const nextTo = overrides.to ?? to;
+    const nextSearch = overrides.search ?? invoiceSearch;
+    const params = {
+      page: targetPage,
+      per_page: targetPerPage,
+    };
+    if (nextFrom) params.from = nextFrom;
+    if (nextTo) params.to = nextTo;
+    if (nextSearch) params.search = nextSearch.trim();
     const res = await medicineInvoiceAPI.getAll(params);
     setInvoices(res.data || []);
-  };
+    setInvoicePagination(res.pagination || null);
+  }, [from, to, invoicePage, invoicePerPage, invoiceSearch]);
 
   const loadAnalytics = async () => {
     const params = {};
@@ -216,6 +230,19 @@ export default function MedicineInvoices() {
   useEffect(() => {
     loadAll();
   }, []);
+
+  const invoicesInitialized = useRef(false);
+  useEffect(() => {
+    if (invoicesInitialized.current) {
+      loadInvoices();
+    } else {
+      invoicesInitialized.current = true;
+    }
+  }, [loadInvoices]);
+
+  useEffect(() => {
+    setInvoicePage(1);
+  }, [from, to, invoiceSearch]);
 
   useEffect(() => {
     try {
@@ -988,24 +1015,6 @@ export default function MedicineInvoices() {
     },
   ];
 
-  const filteredInvoices = useMemo(() => {
-    const q = String(invoiceSearch || '').trim().toLowerCase();
-    if (!q) return invoices;
-    return invoices.filter((row) => {
-      const hay = [
-        row.invoiceNumber,
-        row.paymentMode,
-        row.patient?.name,
-        row.patient?.patientId,
-        row.patient?.phone,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return hay.includes(q);
-    });
-  }, [invoiceSearch, invoices]);
-
   const summary = analytics?.summary || { totalInvoices: 0, totalAmount: 0, paidAmount: 0, pendingAmount: 0, collectionRate: 0 };
   const dayWise = analytics?.dayWise || [];
   const categoryWise = analytics?.categoryWise || [];
@@ -1658,11 +1667,23 @@ export default function MedicineInvoices() {
               />
               <button className={styles.btnSecondary} onClick={() => setInvoiceSearch('')}>Clear</button>
               <span style={{ fontSize: 12, color: '#64748b' }}>
-                Showing {filteredInvoices.length} of {invoices.length}
+                Showing {invoices.length} of {invoicePagination?.total ?? invoices.length}
               </span>
             </div>
           </div>
-          <Table columns={invoiceColumns} data={filteredInvoices} loading={loading} emptyMessage="No invoices found" />
+          <Table columns={invoiceColumns} data={invoices} loading={loading} emptyMessage="No invoices found" />
+          <PaginationControls
+            meta={invoicePagination}
+            onPageChange={(next) => {
+              setInvoicePage(next);
+              loadInvoices({ page: next });
+            }}
+            onPerPageChange={(value) => {
+              setInvoicePerPage(value);
+              setInvoicePage(1);
+              loadInvoices({ page: 1, perPage: value });
+            }}
+          />
         </div>
       )}
 

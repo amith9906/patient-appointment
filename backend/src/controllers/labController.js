@@ -1,6 +1,17 @@
-const { Lab, Hospital, LabTest, Patient, Doctor, Appointment } = require('../models');
+const { Lab, Hospital, LabTest, LabReportTemplate, Report, Patient, Doctor, Appointment } = require('../models');
 const { Op } = require('sequelize');
 const { ensureScopedHospital, isSuperAdmin } = require('../utils/accessScope');
+const { getPaginationParams, buildPaginationMeta, applyPaginationOptions } = require('../utils/pagination');
+
+const normalizeLabTestPayload = (payload = {}) => {
+  const normalized = { ...payload };
+
+  ['labId', 'patientId', 'appointmentId', 'templateId'].forEach((field) => {
+    if (normalized[field] === '') normalized[field] = null;
+  });
+
+  return normalized;
+};
 
 exports.getAllLabs = async (req, res) => {
   try {
@@ -10,11 +21,21 @@ exports.getAllLabs = async (req, res) => {
     const where = { isActive: true };
     if (!isSuperAdmin(req.user)) where.hospitalId = scope.hospitalId;
 
-    const labs = await Lab.findAll({
+    const pagination = getPaginationParams(req, { defaultPerPage: 20, forcePaginate: req.query.paginate !== 'false' });
+    const baseOptions = {
       where,
       include: [{ model: Hospital, as: 'hospital', attributes: ['id', 'name'] }],
       order: [['createdAt', 'DESC']],
-    });
+    };
+    if (pagination) {
+      const queryOptions = applyPaginationOptions(baseOptions, pagination, { forceDistinct: true });
+      const labs = await Lab.findAndCountAll(queryOptions);
+      return res.json({
+        data: labs.rows,
+        meta: buildPaginationMeta(pagination, labs.count),
+      });
+    }
+    const labs = await Lab.findAll(baseOptions);
     res.json(labs);
   } catch (err) { res.status(500).json({ message: err.message }); }
 };
@@ -72,28 +93,41 @@ exports.getAllTests = async (req, res) => {
     const scope = await ensureScopedHospital(req, res);
     if (!scope.allowed) return;
 
-    const { labId, patientId, status, search } = req.query;
+    const { labId, patientId, status, search, appointmentId } = req.query;
     const where = {};
     if (labId) where.labId = labId;
     if (patientId) where.patientId = patientId;
+    if (appointmentId) where.appointmentId = appointmentId;
     if (status) where.status = status;
     if (search) where.testName = { [Op.iLike]: `%${search}%` };
 
-    const tests = await LabTest.findAll({
-      where,
-      include: [
-        {
-          model: Lab,
-          as: 'lab',
-          attributes: ['id', 'name', 'hospitalId'],
-          ...(isSuperAdmin(req.user) ? {} : { where: { hospitalId: scope.hospitalId } }),
-        },
-        { model: Patient, as: 'patient', attributes: ['id', 'name', 'patientId'] },
-        { model: Appointment, as: 'appointment', attributes: ['id', 'appointmentNumber'] },
-      ],
-      order: [['orderedDate', 'DESC']],
-    });
-    res.json(tests);
+      const pagination = getPaginationParams(req, { defaultPerPage: 25, forcePaginate: req.query.paginate !== 'false' });
+      const baseOptions = {
+        where,
+        include: [
+          {
+            model: Lab,
+            as: 'lab',
+            attributes: ['id', 'name', 'hospitalId'],
+            ...(isSuperAdmin(req.user) ? {} : { where: { hospitalId: scope.hospitalId } }),
+          },
+          { model: Patient, as: 'patient', attributes: ['id', 'name', 'patientId'] },
+          { model: Appointment, as: 'appointment', attributes: ['id', 'appointmentNumber'] },
+          { model: Report, as: 'report', attributes: ['id', 'title', 'originalName', 'mimeType', 'fileSize'], required: false },
+          { model: LabReportTemplate, as: 'template', attributes: ['id', 'name', 'category', 'fields'], required: false },
+        ],
+        order: [['orderedDate', 'DESC']],
+      };
+      if (pagination) {
+        const queryOptions = applyPaginationOptions(baseOptions, pagination, { forceDistinct: true });
+        const tests = await LabTest.findAndCountAll(queryOptions);
+        return res.json({
+          data: tests.rows,
+          meta: buildPaginationMeta(pagination, tests.count),
+        });
+      }
+      const tests = await LabTest.findAll(baseOptions);
+      res.json(tests);
   } catch (err) { res.status(500).json({ message: err.message }); }
 };
 
@@ -107,6 +141,8 @@ exports.getOneTest = async (req, res) => {
         { model: Lab, as: 'lab' },
         { model: Patient, as: 'patient' },
         { model: Appointment, as: 'appointment' },
+        { model: Report, as: 'report', required: false },
+        { model: LabReportTemplate, as: 'template', required: false },
       ],
     });
     if (!test) return res.status(404).json({ message: 'Lab test not found' });
@@ -122,7 +158,9 @@ exports.createTest = async (req, res) => {
     const scope = await ensureScopedHospital(req, res);
     if (!scope.allowed) return;
 
-    const payload = { ...req.body };
+    const payload = normalizeLabTestPayload(req.body);
+    if (!payload.labId) return res.status(400).json({ message: 'labId is required' });
+
     const lab = await Lab.findByPk(payload.labId, { attributes: ['id', 'hospitalId', 'isActive'] });
     if (!lab || !lab.isActive) return res.status(400).json({ message: 'Lab not found' });
     if (!isSuperAdmin(req.user) && lab.hospitalId !== scope.hospitalId) {
@@ -163,10 +201,11 @@ exports.updateTest = async (req, res) => {
     if (!isSuperAdmin(req.user) && lab?.hospitalId !== scope.hospitalId) {
       return res.status(403).json({ message: 'Access denied for this hospital lab test' });
     }
-    if (req.body.status === 'completed' && !req.body.completedDate) {
-      req.body.completedDate = new Date();
+    const payload = normalizeLabTestPayload(req.body);
+    if (payload.status === 'completed' && !payload.completedDate) {
+      payload.completedDate = new Date();
     }
-    await test.update(req.body);
+    await test.update(payload);
     res.json(test);
   } catch (err) { res.status(400).json({ message: err.message }); }
 };

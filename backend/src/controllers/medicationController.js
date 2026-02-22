@@ -1,6 +1,7 @@
 const { sequelize, Medication, MedicationBatch, StockLedgerEntry, Hospital } = require('../models');
 const { Op } = require('sequelize');
 const { ensureScopedHospital, isSuperAdmin } = require('../utils/accessScope');
+const { getPaginationParams, buildPaginationMeta, applyPaginationOptions } = require('../utils/pagination');
 const round2 = (n) => Number(Number(n || 0).toFixed(2));
 
 exports.getAll = async (req, res) => {
@@ -8,7 +9,7 @@ exports.getAll = async (req, res) => {
     const scope = await ensureScopedHospital(req, res);
     if (!scope.allowed) return;
 
-    const { hospitalId, category, search, lowStock } = req.query;
+    const { hospitalId, category, search, lowStock, stockStatus } = req.query;
     const where = { isActive: true };
     if (isSuperAdmin(req.user)) {
       if (hospitalId) where.hospitalId = hospitalId;
@@ -23,12 +24,33 @@ exports.getAll = async (req, res) => {
         { genericName: { [Op.iLike]: `%${search}%` } },
       ];
     }
-    const medications = await Medication.findAll({
-      where,
-      include: [{ model: Hospital, as: 'hospital', attributes: ['id', 'name'] }],
-      order: [['createdAt', 'DESC']],
-    });
-    res.json(medications);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const threshold = new Date(today);
+    threshold.setDate(threshold.getDate() + 30);
+    const todayStr = today.toISOString().split('T')[0];
+    const thresholdStr = threshold.toISOString().split('T')[0];
+    if (stockStatus === 'expired') {
+      where.expiryDate = { [Op.lt]: todayStr };
+    } else if (stockStatus === 'expiring') {
+      where.expiryDate = { [Op.gte]: todayStr, [Op.lte]: thresholdStr };
+    }
+      const pagination = getPaginationParams(req, { defaultPerPage: 25, forcePaginate: req.query.paginate !== 'false' });
+      const baseOptions = {
+        where,
+        include: [{ model: Hospital, as: 'hospital', attributes: ['id', 'name'] }],
+        order: [['createdAt', 'DESC']],
+      };
+      if (pagination) {
+        const queryOptions = applyPaginationOptions(baseOptions, pagination, { forceDistinct: true });
+        const medications = await Medication.findAndCountAll(queryOptions);
+        return res.json({
+          data: medications.rows,
+          meta: buildPaginationMeta(pagination, medications.count),
+        });
+      }
+      const medications = await Medication.findAll(baseOptions);
+      res.json(medications);
   } catch (err) { res.status(500).json({ message: err.message }); }
 };
 

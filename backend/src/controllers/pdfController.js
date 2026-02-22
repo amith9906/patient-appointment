@@ -999,3 +999,145 @@ exports.generatePurchaseReturnNote = async (req, res) => {
     if (!res.headersSent) res.status(500).json({ message: err.message });
   }
 };
+
+// ─── 8. Discharge Summary PDF ─────────────────────────────────────────────────
+exports.dischargeSummary = async (req, res) => {
+  try {
+    const appointment = await Appointment.findByPk(req.params.appointmentId, {
+      include: [
+        { model: Doctor, as: 'doctor', include: [{ model: Hospital, as: 'hospital' }] },
+        { model: Patient, as: 'patient' },
+        { model: Prescription, as: 'prescriptions', include: [{ model: Medication, as: 'medication' }] },
+      ],
+    });
+    if (!appointment) return res.status(404).json({ message: 'Appointment not found' });
+    if (!(await ensureAppointmentPdfAccess(req, res, appointment))) return;
+
+    const hospital = appointment.doctor?.hospital;
+    if (!hospital) return res.status(400).json({ message: 'Hospital not found' });
+    const settings = await getSettings(hospital.id);
+    const patient = appointment.patient;
+    const doctor = appointment.doctor;
+
+    // Extra params from query
+    const conditionAtDischarge = req.query.conditionAtDischarge || 'Stable';
+    const dischargeDate = req.query.dischargeDate || new Date().toISOString().split('T')[0];
+    const dischargeNotes = req.query.dischargeNotes || '';
+
+    const doc = initDoc(res, `discharge-summary-${appointment.appointmentNumber}.pdf`);
+    drawHeader(doc, hospital, settings);
+
+    // Title
+    doc.fontSize(14).font('Helvetica-Bold').text('DISCHARGE SUMMARY', { align: 'center' });
+    doc.moveDown(0.3);
+    drawHRule(doc);
+    doc.moveDown(0.6);
+
+    // Patient info box
+    const leftX = 50, rightX = 310, colW = 230;
+    const startY = doc.y;
+    doc.fontSize(9).font('Helvetica-Bold');
+    const leftRows = [
+      ['Patient Name:', patient?.name || '—'],
+      ['Patient ID:', patient?.patientId || '—'],
+      ['Age / Gender:', `${patientAge(patient?.dateOfBirth)} / ${(patient?.gender || '—').toUpperCase()}`],
+      ['Blood Group:', patient?.bloodGroup || '—'],
+      ['Contact:', patient?.phone || '—'],
+    ];
+    const rightRows = [
+      ['Appointment #:', appointment.appointmentNumber],
+      ['Admission Date:', fmtDate(appointment.appointmentDate)],
+      ['Discharge Date:', fmtDate(dischargeDate)],
+      ['Attending Doctor:', `Dr. ${doctor?.name || '—'}`],
+      ['Specialization:', doctor?.specialization || '—'],
+    ];
+    leftRows.forEach(([label, val]) => {
+      doc.font('Helvetica-Bold').text(label, leftX, doc.y, { width: 110, continued: true });
+      doc.font('Helvetica').text(val, { width: colW - 110 });
+    });
+    const afterLeft = doc.y;
+    doc.y = startY;
+    rightRows.forEach(([label, val]) => {
+      doc.font('Helvetica-Bold').text(label, rightX, doc.y, { width: 110, continued: true });
+      doc.font('Helvetica').text(val, { width: colW - 110 });
+    });
+    doc.y = Math.max(afterLeft, doc.y);
+    doc.moveDown(0.5);
+    drawHRule(doc);
+    doc.moveDown(0.5);
+
+    // Clinical sections helper
+    const section = (title, content) => {
+      if (!content) return;
+      doc.fontSize(10).font('Helvetica-Bold').text(title, 50, doc.y, { width: 495 });
+      doc.moveDown(0.1);
+      doc.fontSize(9).font('Helvetica').text(content, 60, doc.y, { width: 480 });
+      doc.moveDown(0.6);
+    };
+
+    section('Chief Complaint / Reason for Visit:', appointment.reason);
+    section('Examination Findings:', appointment.examinationFindings);
+    section('Diagnosis:', appointment.diagnosis);
+    section('Treatment Given:', appointment.treatmentDone);
+
+    // Medicines prescribed
+    if (appointment.prescriptions?.length > 0) {
+      doc.fontSize(10).font('Helvetica-Bold').text('Medicines Prescribed:', 50, doc.y, { width: 495 });
+      doc.moveDown(0.2);
+      // Table header
+      const cols = [50, 220, 310, 390, 460];
+      doc.fontSize(8).font('Helvetica-Bold');
+      ['Medicine', 'Dosage', 'Duration', 'Qty', 'Instructions'].forEach((h, i) => {
+        doc.text(h, cols[i], doc.y, { width: cols[i + 1] ? cols[i + 1] - cols[i] - 4 : 85 });
+      });
+      doc.moveDown(0.15);
+      drawHRule(doc);
+      doc.moveDown(0.15);
+      appointment.prescriptions.forEach(p => {
+        const med = p.medication;
+        const rowY = doc.y;
+        doc.fontSize(8).font('Helvetica');
+        doc.text(med?.name || p.medicationName || '—', cols[0], rowY, { width: 165 });
+        doc.text(p.frequency || '—', cols[1], rowY, { width: 85 });
+        doc.text(p.duration || '—', cols[2], rowY, { width: 75 });
+        doc.text(String(p.quantity || '—'), cols[3], rowY, { width: 65 });
+        doc.text(p.instructions || '—', cols[4], rowY, { width: 85 });
+        doc.moveDown(0.3);
+      });
+      doc.moveDown(0.3);
+    }
+
+    section('Advice / Discharge Instructions:', appointment.advice);
+
+    if (appointment.treatmentPlan) {
+      section('Follow-up Treatment Plan:', appointment.treatmentPlan);
+    }
+
+    if (dischargeNotes) {
+      section('Additional Discharge Notes:', dischargeNotes);
+    }
+
+    // Follow-up and condition
+    doc.moveDown(0.2);
+    drawHRule(doc);
+    doc.moveDown(0.4);
+    doc.fontSize(10).font('Helvetica-Bold');
+    doc.text(`Follow-up Date: `, 50, doc.y, { continued: true });
+    doc.font('Helvetica').text(appointment.followUpDate ? fmtDate(appointment.followUpDate) : 'As needed');
+    doc.moveDown(0.2);
+    doc.font('Helvetica-Bold').text(`Condition at Discharge: `, 50, doc.y, { continued: true });
+    doc.font('Helvetica').text(conditionAtDischarge);
+
+    if (patient?.allergies) {
+      doc.moveDown(0.2);
+      doc.font('Helvetica-Bold').text(`Known Allergies: `, 50, doc.y, { continued: true });
+      doc.font('Helvetica').text(patient.allergies);
+    }
+
+    drawFooter(doc, settings, true, appointment);
+    doc.end();
+  } catch (err) {
+    console.error('Discharge summary PDF error:', err);
+    if (!res.headersSent) res.status(500).json({ message: err.message });
+  }
+};

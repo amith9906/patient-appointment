@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { medicationAPI } from '../services/api';
+import { medicationAPI, searchAPI } from '../services/api';
 import styles from './Layout.module.css';
 
 const ICON_BY_KEY = {
@@ -25,15 +25,21 @@ const NAV_BY_ROLE = {
     { path: '/doctors', label: 'Doctors', icon: '👨‍⚕️' },
     { path: '/patients', label: 'Patients', icon: '🧑‍🤝‍🧑' },
     { path: '/appointments', label: 'Appointments', icon: 'Calendar' },
+    { path: '/follow-ups', label: 'Follow-ups', icon: '🔔' },
+    { path: '/queue', label: 'Token Queue', icon: '🎫' },
+    { path: '/ipd', label: 'IPD', icon: '🏨' },
+    { path: '/ot', label: 'OT', icon: '🩺' },
     { path: '/billing', label: 'Billing', icon: '💰' },
     { path: '/medicine-invoices', label: 'Medicine Invoices', icon: '🧾' },
     { path: '/expenses', label: 'Expenses', icon: '💸' },
+    { path: '/treatment-plans', label: 'Treatment Plans', icon: '📋' },
     { path: '/medications', label: 'Medications', icon: 'Rx' },
     { path: '/vendors', label: 'Vendors', icon: '🏭' },
     { path: '/stock', label: 'Stock Management', icon: '📦' },
     { path: '/corporates', label: 'Corporate Accounts', icon: '🏢' },
     { path: '/packages', label: 'Package Plans', icon: 'Bundle' },
     { path: '/labs', label: 'Labs', icon: '🔬' },
+    { path: '/lab-report-templates', label: 'Lab Templates', icon: '🧪' },
     { path: '/reports', label: 'Reports', icon: 'Report' },
     { path: '/analytics', label: 'Analytics', icon: '📈' },
     { path: '/users', label: 'User Management', icon: '👥' },
@@ -46,15 +52,21 @@ const NAV_BY_ROLE = {
     { path: '/doctors', label: 'Doctors', icon: '👨‍⚕️' },
     { path: '/patients', label: 'Patients', icon: '🧑‍🤝‍🧑' },
     { path: '/appointments', label: 'Appointments', icon: 'Calendar' },
+    { path: '/follow-ups', label: 'Follow-ups', icon: '🔔' },
+    { path: '/queue', label: 'Token Queue', icon: '🎫' },
+    { path: '/ipd', label: 'IPD', icon: '🏨' },
+    { path: '/ot', label: 'OT', icon: '🩺' },
     { path: '/billing', label: 'Billing', icon: '💰' },
     { path: '/medicine-invoices', label: 'Medicine Invoices', icon: '🧾' },
     { path: '/expenses', label: 'Expenses', icon: '💸' },
+    { path: '/treatment-plans', label: 'Treatment Plans', icon: '📋' },
     { path: '/medications', label: 'Medications', icon: 'Rx' },
     { path: '/vendors', label: 'Vendors', icon: '🏭' },
     { path: '/stock', label: 'Stock Management', icon: '📦' },
     { path: '/corporates', label: 'Corporate Accounts', icon: '🏢' },
     { path: '/packages', label: 'Package Plans', icon: 'Bundle' },
     { path: '/labs', label: 'Labs', icon: '🔬' },
+    { path: '/lab-report-templates', label: 'Lab Templates', icon: '🧪' },
     { path: '/reports', label: 'Reports', icon: 'Report' },
     { path: '/analytics', label: 'Analytics', icon: '📈' },
     { path: '/users', label: 'User Management', icon: '👥' },
@@ -63,6 +75,8 @@ const NAV_BY_ROLE = {
   receptionist: [
     { path: '/', label: 'Dashboard', icon: '📊' },
     { path: '/appointments', label: 'Appointments', icon: 'Calendar' },
+    { path: '/queue', label: 'Token Queue', icon: '🎫' },
+    { path: '/ipd', label: 'IPD', icon: '🏨' },
     { path: '/billing', label: 'Billing', icon: '💰' },
     { path: '/medicine-invoices', label: 'Medicine Invoices', icon: '🧾' },
     { path: '/patients', label: 'Patients', icon: '🧑‍🤝‍🧑' },
@@ -75,13 +89,16 @@ const NAV_BY_ROLE = {
   doctor: [
     { path: '/doctor-portal', label: 'My Dashboard', icon: '📊' },
     { path: '/doctor-portal/appointments', label: 'My Schedule', icon: 'Calendar' },
+    { path: '/follow-ups', label: 'Follow-ups', icon: '🔔' },
     { path: '/doctor-portal/patients', label: 'My Patients', icon: '🧑‍🤝‍🧑' },
     { path: '/labs', label: 'Lab Tests', icon: '🔬' },
     { path: '/medications', label: 'Medications', icon: 'Rx' },
+    { path: '/treatment-plans', label: 'Treatment Plans', icon: '📋' },
+    { path: '/ipd', label: 'IPD', icon: '🏨' },
+    { path: '/ot', label: 'OT', icon: '🩺' },
   ],
   patient: [
     { path: '/patient-portal', label: 'My Dashboard', icon: '🏠' },
-    { path: '/patient-portal/book', label: 'Book Appointment', icon: 'Calendar' },
     { path: '/patient-portal/appointments', label: 'My Appointments', icon: '🗓️' },
     { path: '/patient-portal/reports', label: 'My Reports', icon: 'Report' },
     { path: '/patient-portal/prescriptions', label: 'Prescriptions', icon: 'Rx' },
@@ -107,6 +124,47 @@ export default function Layout({ children }) {
   const [expiryAlerts, setExpiryAlerts] = useState([]);
   const [bellOpen, setBellOpen] = useState(false);
   const bellRef = useRef(null);
+
+  // Global search state
+  const [searchQ, setSearchQ] = useState('');
+  const [searchResults, setSearchResults] = useState(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchRef = useRef(null);
+  const searchTimer = useRef(null);
+
+  const doSearch = useCallback((q) => {
+    clearTimeout(searchTimer.current);
+    if (!q || q.length < 2) { setSearchResults(null); setSearchOpen(false); return; }
+    searchTimer.current = setTimeout(async () => {
+      setSearchLoading(true);
+      try {
+        const res = await searchAPI.global(q);
+        setSearchResults(res.data);
+        setSearchOpen(true);
+      } catch {
+        setSearchResults(null);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 300);
+  }, []);
+
+  const handleSearchChange = (e) => {
+    const q = e.target.value;
+    setSearchQ(q);
+    doSearch(q);
+  };
+
+  const clearSearch = () => { setSearchQ(''); setSearchResults(null); setSearchOpen(false); };
+
+  // Close search dropdown on outside click
+  useEffect(() => {
+    if (!searchOpen) return;
+    const handler = (e) => { if (searchRef.current && !searchRef.current.contains(e.target)) setSearchOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [searchOpen]);
 
   useEffect(() => {
     if (!['super_admin', 'admin'].includes(user.role)) return;
@@ -163,6 +221,109 @@ export default function Layout({ children }) {
             </div>
           </div>
           <div className={styles.headerRight}>
+            {/* Global Search */}
+            {['super_admin', 'admin', 'receptionist', 'doctor'].includes(user.role) && (
+              <div ref={searchRef} style={{ position: 'relative' }}>
+                <div style={{ display: 'flex', alignItems: 'center', background: '#f1f5f9', borderRadius: 8, padding: '4px 10px', gap: 6, minWidth: 220 }}>
+                  <span style={{ fontSize: 14, color: '#94a3b8' }}>🔍</span>
+                  <input
+                    value={searchQ}
+                    onChange={handleSearchChange}
+                    onFocus={() => { if (searchResults) setSearchOpen(true); }}
+                    placeholder="Search patients, doctors..."
+                    style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: '#334155', width: '100%' }}
+                  />
+                  {searchLoading && <span style={{ fontSize: 11, color: '#94a3b8' }}>...</span>}
+                  {searchQ && !searchLoading && (
+                    <button onClick={clearSearch} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#94a3b8', fontSize: 14, padding: 0 }}>✕</button>
+                  )}
+                </div>
+                {searchOpen && searchResults && (
+                  <div style={{ position: 'absolute', top: '110%', left: 0, right: 0, minWidth: 320, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,0.12)', zIndex: 9999, maxHeight: 480, overflowY: 'auto' }}>
+                    {/* Patients */}
+                    {searchResults.patients?.length > 0 && (
+                      <div>
+                        <div style={{ padding: '8px 12px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', borderBottom: '1px solid #f1f5f9' }}>Patients</div>
+                        {searchResults.patients.map((p) => (
+                          <Link key={p.id} to={`/patients/${p.id}`} onClick={clearSearch}
+                            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', textDecoration: 'none', color: '#1e293b', fontSize: 13 }}
+                            onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
+                            onMouseLeave={(e) => e.currentTarget.style.background = ''}
+                          >
+                            <span style={{ fontSize: 16 }}>🧑‍🤝‍🧑</span>
+                            <div>
+                              <div style={{ fontWeight: 600 }}>{p.name}</div>
+                              <div style={{ fontSize: 11, color: '#94a3b8' }}>{p.patientId} · {p.phone} · {p.gender}</div>
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                    {/* Doctors */}
+                    {searchResults.doctors?.length > 0 && (
+                      <div>
+                        <div style={{ padding: '8px 12px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', borderBottom: '1px solid #f1f5f9', borderTop: searchResults.patients?.length > 0 ? '1px solid #f1f5f9' : 'none' }}>Doctors</div>
+                        {searchResults.doctors.map((d) => (
+                          <Link key={d.id} to="/doctors" onClick={clearSearch}
+                            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', textDecoration: 'none', color: '#1e293b', fontSize: 13 }}
+                            onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
+                            onMouseLeave={(e) => e.currentTarget.style.background = ''}
+                          >
+                            <span style={{ fontSize: 16 }}>👨‍⚕️</span>
+                            <div>
+                              <div style={{ fontWeight: 600 }}>{d.name}</div>
+                              <div style={{ fontSize: 11, color: '#94a3b8' }}>{d.specialization}</div>
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                    {/* Appointments */}
+                    {searchResults.appointments?.length > 0 && (
+                      <div>
+                        <div style={{ padding: '8px 12px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', borderBottom: '1px solid #f1f5f9', borderTop: '1px solid #f1f5f9' }}>Appointments</div>
+                        {searchResults.appointments.map((a) => (
+                          <Link key={a.id} to="/appointments" onClick={clearSearch}
+                            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', textDecoration: 'none', color: '#1e293b', fontSize: 13 }}
+                            onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
+                            onMouseLeave={(e) => e.currentTarget.style.background = ''}
+                          >
+                            <span style={{ fontSize: 16 }}>📅</span>
+                            <div>
+                              <div style={{ fontWeight: 600 }}>{a.patientName}</div>
+                              <div style={{ fontSize: 11, color: '#94a3b8' }}>{a.date} {a.time && `· ${a.time}`} · {a.status}</div>
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                    {/* IPD Admissions */}
+                    {searchResults.admissions?.length > 0 && (
+                      <div>
+                        <div style={{ padding: '8px 12px', fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', borderBottom: '1px solid #f1f5f9', borderTop: '1px solid #f1f5f9' }}>IPD Admissions</div>
+                        {searchResults.admissions.map((a) => (
+                          <Link key={a.id} to={`/ipd/${a.id}`} onClick={clearSearch}
+                            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', textDecoration: 'none', color: '#1e293b', fontSize: 13 }}
+                            onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
+                            onMouseLeave={(e) => e.currentTarget.style.background = ''}
+                          >
+                            <span style={{ fontSize: 16 }}>🏨</span>
+                            <div>
+                              <div style={{ fontWeight: 600 }}>{a.patientName}</div>
+                              <div style={{ fontSize: 11, color: '#94a3b8' }}>Admitted: {a.date} · {a.status}</div>
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                    {/* No results */}
+                    {!searchResults.patients?.length && !searchResults.doctors?.length && !searchResults.appointments?.length && !searchResults.admissions?.length && (
+                      <div style={{ padding: '16px 12px', fontSize: 13, color: '#94a3b8', textAlign: 'center' }}>No results for "{searchQ}"</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             {['super_admin', 'admin'].includes(user.role) && (
               <div className={styles.bellWrap} ref={bellRef}>
                 <button className={styles.bellBtn} onClick={() => setBellOpen((v) => !v)} title="Expiry Alerts">

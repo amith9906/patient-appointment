@@ -16,6 +16,7 @@ const Report = sequelize.define('Report', {
   description: { type: DataTypes.TEXT },
   uploadedBy: { type: DataTypes.STRING },
   isActive: { type: DataTypes.BOOLEAN, defaultValue: true },
+  labTestId: { type: DataTypes.UUID, allowNull: true },
 });
 
 module.exports = Report;

@@ -45,6 +45,12 @@ app.use('/api/vendors', require('./routes/vendors'));
 app.use('/api/stock-purchases', require('./routes/stockPurchases'));
 app.use('/api/corporates', require('./routes/corporates'));
 app.use('/api/packages', require('./routes/packages'));
+app.use('/api/lab-report-templates', require('./routes/labReportTemplates'));
+app.use('/api/doctor-leaves', require('./routes/doctorLeaves'));
+app.use('/api/treatment-plans', require('./routes/treatmentPlans'));
+app.use('/api/ipd', require('./routes/ipd'));
+app.use('/api/ot', require('./routes/ot'));
+app.use('/api/search', require('./routes/search'));
 
 // Health check
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));

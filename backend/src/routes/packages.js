@@ -14,6 +14,6 @@ router.get('/recommendation', authorize('super_admin', 'admin', 'receptionist', 
 router.post('/assignments', authorize('super_admin', 'admin', 'receptionist'), c.assignToPatient);
 router.patch('/assignments/:id/consume', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.consumeVisit);
 router.patch('/assignments/:id/status', authorize('super_admin', 'admin', 'receptionist'), c.updateAssignmentStatus);
-router.get('/patients/:patientId/assignments', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.getPatientAssignments);
+router.get('/patients/:patientId/assignments', authorize('super_admin', 'admin', 'receptionist', 'doctor', 'patient'), c.getPatientAssignments);
 
 module.exports = router;

@@ -9,6 +9,7 @@ router.get('/today',      authorize('super_admin', 'admin', 'receptionist', 'doc
 router.get('/queue',      authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), c.getQueue);
 router.get('/dashboard',  authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), c.getDashboardStats);
 router.get('/analytics',  authorize('super_admin', 'admin'), c.getBillingAnalytics);
+router.get('/revenue-overview', authorize('super_admin', 'admin'), c.getRevenueOverview);
 router.get('/patient-analytics', authorize('super_admin', 'admin'), c.getPatientAnalytics);
 router.get('/',           authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), c.getAll);
 router.get('/:id',        authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), c.getOne);

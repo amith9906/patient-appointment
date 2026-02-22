@@ -1,6 +1,13 @@
-const { Doctor, Hospital, Department, Appointment, Patient } = require('../models');
+const { Doctor, Hospital, Department, Appointment, Patient, DoctorAvailability, DoctorLeave } = require('../models');
 const { Op } = require('sequelize');
 const { ensureScopedHospital, isSuperAdmin } = require('../utils/accessScope');
+const {
+  DAY_NAMES,
+  toMinutes,
+  ensureScheduleForDay,
+  buildSlotsFromSchedules,
+  fetchSchedules,
+} = require('../utils/availability');
 
 const normalizeDoctorPayload = (payload = {}) => {
   const normalized = { ...payload };
@@ -46,6 +53,23 @@ const resolveDoctorProfileForUser = async (user) => {
   }
 
   return null;
+};
+
+const ensureDoctorScoped = async (req, res, doctorId) => {
+  const scope = await ensureScopedHospital(req, res);
+  if (!scope.allowed) return null;
+  const doc = await Doctor.findByPk(doctorId, {
+    attributes: ['id', 'hospitalId', 'availableDays', 'availableFrom', 'availableTo'],
+  });
+  if (!doc) {
+    res.status(404).json({ message: 'Doctor not found' });
+    return null;
+  }
+  if (!isSuperAdmin(req.user) && doc.hospitalId !== scope.hospitalId) {
+    res.status(403).json({ message: 'Access denied for this hospital doctor' });
+    return null;
+  }
+  return doc;
 };
 
 exports.getMe = async (req, res) => {
@@ -143,6 +167,145 @@ exports.getOne = async (req, res) => {
   } catch (err) { res.status(500).json({ message: err.message }); }
 };
 
+exports.getAvailability = async (req, res) => {
+  try {
+    const doctor = await ensureDoctorScoped(req, res, req.params.id);
+    if (!doctor) return;
+    const dayOfWeek = Number(req.query.day);
+    const where = { doctorId: doctor.id };
+    if (!Number.isNaN(dayOfWeek)) where.dayOfWeek = dayOfWeek;
+    const rows = await DoctorAvailability.findAll({
+      where,
+      order: [['dayOfWeek', 'ASC'], ['startTime', 'ASC']],
+    });
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.saveAvailability = async (req, res) => {
+  try {
+    const doctor = await ensureDoctorScoped(req, res, req.params.id);
+    if (!doctor) return;
+    const rules = Array.isArray(req.body.rules) ? req.body.rules : [];
+    const normalized = rules
+      .map((rule) => {
+        const dayOfWeek = Math.max(0, Math.min(6, Number(rule.dayOfWeek ?? 0)));
+        const startTime = String(rule.startTime || '09:00');
+        const endTime = String(rule.endTime || '17:00');
+        if (!startTime || !endTime) return null;
+        const startMinutes = toMinutes(startTime);
+        const endMinutes = toMinutes(endTime);
+        if (endMinutes <= startMinutes) return null;
+        return {
+          doctorId: doctor.id,
+          dayOfWeek,
+          startTime,
+          endTime,
+          slotDurationMinutes: Math.max(1, Number(rule.slotDurationMinutes || 30)),
+          bufferMinutes: Math.max(0, Number(rule.bufferMinutes || 0)),
+          maxAppointmentsPerSlot: Math.max(1, Number(rule.maxAppointmentsPerSlot || 1)),
+          notes: rule.notes || null,
+          isActive: rule.isActive !== false,
+        };
+      })
+      .filter(Boolean);
+
+    await DoctorAvailability.destroy({ where: { doctorId: doctor.id } });
+    const created = normalized.length
+      ? await DoctorAvailability.bulkCreate(normalized)
+      : [];
+    res.json(created);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
+exports.getAvailabilitySummary = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+    const targetHospital = req.query.hospitalId || (isSuperAdmin(req.user) ? null : scope.hospitalId);
+    const docWhere = {};
+    if (targetHospital) docWhere.hospitalId = targetHospital;
+    const doctorCount = await Doctor.count({ where: docWhere });
+
+    const availabilityRows = await DoctorAvailability.findAll({
+      where: { isActive: true },
+      include: [{
+        model: Doctor,
+        as: 'doctor',
+        where: docWhere,
+        attributes: [],
+        required: true,
+      }],
+      attributes: ['dayOfWeek'],
+      raw: true,
+    });
+    const rulesByDay = {};
+    availabilityRows.forEach((row) => {
+      const day = Number.isFinite(Number(row.dayOfWeek)) ? Number(row.dayOfWeek) : 0;
+      rulesByDay[day] = (rulesByDay[day] || 0) + 1;
+    });
+
+    const leaveWhere = {};
+    if (targetHospital) leaveWhere.hospitalId = targetHospital;
+    const todayDate = new Date().toISOString().split('T')[0];
+    const totalLeaves = await DoctorLeave.count({ where: leaveWhere });
+    const leavesToday = await DoctorLeave.count({ where: { ...leaveWhere, leaveDate: todayDate } });
+    const upcomingLeaves = await DoctorLeave.count({ where: { ...leaveWhere, leaveDate: { [Op.gte]: todayDate } } });
+
+    res.json({
+      doctorCount,
+      activeRules: availabilityRows.length,
+      rulesByDay,
+      totalLeaves,
+      leavesToday,
+      upcomingLeaves,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// Returns a Set of doctorIds available on a given date (have schedule + not on full-day leave)
+exports.getAvailableOnDate = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+
+    const { date } = req.query;
+    if (!date) return res.status(400).json({ message: 'date is required' });
+
+    const dayOfWeek = new Date(`${date}T00:00:00`).getDay(); // 0=Sun…6=Sat
+    const docWhere = isSuperAdmin(req.user) ? {} : { hospitalId: scope.hospitalId };
+
+    // Doctors with an active schedule for this day of week
+    const scheduledRows = await DoctorAvailability.findAll({
+      where: { dayOfWeek, isActive: true },
+      include: [{ model: Doctor, as: 'doctor', where: docWhere, attributes: ['id'], required: true }],
+      attributes: ['doctorId'],
+      raw: true,
+    });
+    const availableIds = new Set(scheduledRows.map((r) => r.doctorId));
+
+    // Remove any doctor with a full-day leave on this date
+    if (availableIds.size > 0) {
+      const fullDayLeaves = await DoctorLeave.findAll({
+        where: { doctorId: Array.from(availableIds), leaveDate: date, isFullDay: true },
+        attributes: ['doctorId'],
+        raw: true,
+      });
+      fullDayLeaves.forEach((l) => availableIds.delete(l.doctorId));
+    }
+
+    res.json({ date, dayOfWeek, availableDoctorIds: Array.from(availableIds) });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 exports.create = async (req, res) => {
   try {
     const scope = await ensureScopedHospital(req, res);
@@ -197,6 +360,7 @@ exports.getAvailableSlots = async (req, res) => {
     if (!scope.allowed) return;
 
     const { date } = req.query;
+    if (!date) return res.status(400).json({ message: 'date is required' });
     const doctor = await Doctor.findByPk(req.params.id);
     if (!doctor) return res.status(404).json({ message: 'Doctor not found' });
     if (!isSuperAdmin(req.user) && doctor.hospitalId !== scope.hospitalId) {
@@ -211,21 +375,18 @@ exports.getAvailableSlots = async (req, res) => {
       },
     });
 
-    const bookedTimes = new Set(
-      bookedAppointments
-        .map((a) => String(a.appointmentTime || '').slice(0, 5))
-        .filter(Boolean)
-    );
-    const slots = [];
-    const start = parseInt(doctor.availableFrom.split(':')[0]);
-    const end = parseInt(doctor.availableTo.split(':')[0]);
+    const bookedTimes = new Map();
+    bookedAppointments.forEach((a) => {
+      const key = String(a.appointmentTime || '').slice(0, 5);
+      if (!key) return;
+      bookedTimes.set(key, (bookedTimes.get(key) || 0) + 1);
+    });
 
-    for (let h = start; h < end; h++) {
-      for (let m = 0; m < 60; m += 30) {
-        const time = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-        slots.push({ time, available: !bookedTimes.has(time) });
-      }
-    }
+    const dayOfWeek = new Date(`${date}T00:00:00`).getDay();
+    const dbSchedules = await fetchSchedules(doctor.id, dayOfWeek);
+    const schedules = ensureScheduleForDay(doctor, dayOfWeek, dbSchedules);
+    if (!schedules.length) return res.json([]);
+    const slots = buildSlotsFromSchedules(schedules, bookedTimes);
     res.json(slots);
   } catch (err) { res.status(500).json({ message: err.message }); }
 };

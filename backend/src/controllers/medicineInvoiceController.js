@@ -14,6 +14,7 @@ const {
   User,
 } = require('../models');
 const { ensureScopedHospital, isSuperAdmin } = require('../utils/accessScope');
+const { getPaginationParams, buildPaginationMeta, applyPaginationOptions } = require('../utils/pagination');
 
 const round2 = (value) => Number(Number(value || 0).toFixed(2));
 const withinTolerance = (a, b, tolerance = 0.5) => Math.abs(Number(a || 0) - Number(b || 0)) <= tolerance;
@@ -42,7 +43,8 @@ exports.getAll = async (req, res) => {
     else if (to) where.invoiceDate = { [Op.lte]: to };
     if (search) where.invoiceNumber = { [Op.iLike]: `%${search}%` };
 
-    const invoices = await MedicineInvoice.findAll({
+    const pagination = getPaginationParams(req, { defaultPerPage: 25, forcePaginate: req.query.paginate !== 'false' });
+    const baseOptions = {
       where,
       include: [
         { model: Patient, as: 'patient', attributes: ['id', 'name', 'patientId', 'phone'] },
@@ -50,8 +52,16 @@ exports.getAll = async (req, res) => {
         { model: MedicineInvoiceItem, as: 'items', attributes: ['id', 'quantity', 'lineTotal'] },
       ],
       order: [['invoiceDate', 'DESC'], ['createdAt', 'DESC']],
-    });
-
+    };
+    if (pagination) {
+      const queryOptions = applyPaginationOptions(baseOptions, pagination, { forceDistinct: true });
+      const invoices = await MedicineInvoice.findAndCountAll(queryOptions);
+      return res.json({
+        data: invoices.rows,
+        meta: buildPaginationMeta(pagination, invoices.count),
+      });
+    }
+    const invoices = await MedicineInvoice.findAll(baseOptions);
     res.json(invoices);
   } catch (err) {
     res.status(500).json({ message: err.message });

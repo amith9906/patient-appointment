@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { labAPI, patientAPI, hospitalAPI } from '../services/api';
 import Modal from '../components/Modal';
 import Table from '../components/Table';
 import Badge from '../components/Badge';
 import SearchableSelect from '../components/SearchableSelect';
+import PaginationControls from '../components/PaginationControls';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
 
@@ -27,15 +28,35 @@ export default function Labs() {
   const [resultForm, setResultForm] = useState({ result: '', resultValue: '', isAbnormal: false, status: 'completed', technicianNotes: '' });
   const [tab, setTab] = useState('tests');
   const [statusFilter, setStatusFilter] = useState('');
+  const [testPage, setTestPage] = useState(1);
+  const [testPerPage, setTestPerPage] = useState(25);
+  const [testPagination, setTestPagination] = useState(null);
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true);
-    const params = statusFilter ? { status: statusFilter } : {};
-    Promise.all([labAPI.getAll(), labAPI.getAllTests(params), patientAPI.getAll(), hospitalAPI.getAll()])
-      .then(([l, t, p, h]) => { setLabs(l.data); setTests(t.data); setPatients(p.data); setHospitals(h.data); })
+    const params = {
+      page: testPage,
+      per_page: testPerPage,
+    };
+    if (statusFilter) params.status = statusFilter;
+    Promise.all([labAPI.getAll(), labAPI.getAllTests(params), patientAPI.getAll({ paginate: 'false' }), hospitalAPI.getAll()])
+      .then(([l, t, p, h]) => {
+        setLabs(l.data);
+        setTests(t.data);
+        setTestPagination(t.pagination || null);
+        setPatients(p.data);
+        setHospitals(h.data);
+      })
       .finally(() => setLoading(false));
-  };
-  useEffect(load, [statusFilter]);
+  }, [statusFilter, testPage, testPerPage]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    setTestPage(1);
+  }, [statusFilter]);
 
   const handleLabSubmit = async (e) => {
     e.preventDefault();
@@ -129,7 +150,17 @@ export default function Labs() {
             </select>
             <button className={styles.btnSecondary} onClick={() => setStatusFilter('')}>Clear</button>
           </div>
-          <div className={styles.card}><Table columns={testCols} data={tests} loading={loading} /></div>
+          <div className={styles.card}>
+            <Table columns={testCols} data={tests} loading={loading} />
+            <PaginationControls
+              meta={testPagination}
+              onPageChange={(nextPage) => setTestPage(nextPage)}
+              onPerPageChange={(value) => {
+                setTestPerPage(value);
+                setTestPage(1);
+              }}
+            />
+          </div>
         </>
       )}
       {tab === 'labs' && <div className={styles.card}><Table columns={labCols} data={labs} loading={loading} /></div>}

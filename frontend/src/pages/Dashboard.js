@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { appointmentAPI, packageAPI, patientAPI } from '../services/api';
+import { appointmentAPI, ipdAPI, packageAPI, patientAPI } from '../services/api';
 import Badge from '../components/Badge';
 import styles from './Dashboard.module.css';
 
@@ -36,6 +36,7 @@ export default function Dashboard() {
   const [referralData, setReferralData] = useState(null);
   const [packageData, setPackageData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [ipdStats, setIpdStats] = useState(null);
 
   useEffect(() => {
     Promise.all([
@@ -43,12 +44,14 @@ export default function Dashboard() {
       appointmentAPI.getToday(),
       patientAPI.getReferralAnalytics().catch(() => ({ data: null })),
       packageAPI.getAnalytics().catch(() => ({ data: null })),
+      ipdAPI.getStats().catch(() => ({ data: null })),
     ])
-      .then(([s, t, r, p]) => {
+      .then(([s, t, r, p, ipd]) => {
         setStats(s.data);
         setTodayAppts(t.data);
         setReferralData(r.data || null);
         setPackageData(p.data || null);
+        setIpdStats(ipd.data || null);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -96,14 +99,76 @@ export default function Dashboard() {
             color="#0891b2"
             to="/analytics"
           />
-          <StatCard
-            label="Referral Revenue"
-            value={referralData ? `Rs ${Number(referralData.summary?.totalRevenue || 0).toLocaleString('en-IN')}` : '-'}
-            icon="Rs"
-            color="#d97706"
-            to="/analytics"
-          />
-        </div>
+         <StatCard
+           label="Referral Revenue"
+           value={referralData ? `Rs ${Number(referralData.summary?.totalRevenue || 0).toLocaleString('en-IN')}` : '-'}
+           icon="Rs"
+           color="#d97706"
+           to="/analytics"
+         />
+       </div>
+        {ipdStats && (
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>
+              <h3>IPD Insights</h3>
+              <span className={styles.sectionNote}>
+                {ipdStats.totalAdmitted ?? 0} admitted • {ipdStats.availableBeds ?? 0} beds available
+              </span>
+            </div>
+            <div className={styles.insightGrid}>
+              <div className={styles.insightCard}>
+                <div className={styles.insightLabel}>Admitted Patients</div>
+                <div className={styles.insightValue}>{ipdStats.totalAdmitted ?? 0}</div>
+                <div className={styles.insightSub}>{ipdStats.dischargedToday ?? 0} discharged today</div>
+              </div>
+              <div className={styles.insightCard}>
+                <div className={styles.insightLabel}>Occupancy</div>
+                <div className={styles.insightValue}>{maybePercent(ipdStats.occupancyRate)}</div>
+                <div className={styles.insightSub}>{ipdStats.availableBeds ?? 0} beds free</div>
+              </div>
+              <div className={styles.insightCard}>
+                <div className={styles.insightLabel}>Revenue (30d)</div>
+                <div className={styles.insightValue}>{formatCurrency(ipdStats.revenueThisMonth)}</div>
+                <div className={styles.insightSub}>GST collected {formatCurrency(ipdStats.gstCollected)}</div>
+              </div>
+            <div className={styles.insightCard}>
+              <div className={styles.insightLabel}>Pending Dues</div>
+              <div className={styles.insightValue}>{formatCurrency(ipdStats.pendingDues)}</div>
+              <div className={styles.insightSub}>Balance awaiting clearance</div>
+            </div>
+            </div>
+            <div className={styles.insightGrid}>
+              <div className={styles.insightCard}>
+                <div className={styles.insightLabel}>Workload</div>
+                <div className={styles.insightValue}>{ipdStats.dischargesPerDay?.toFixed ? ipdStats.dischargesPerDay.toFixed(1) : ipdStats.dischargesPerDay}</div>
+                <div className={styles.insightSub}>Avg stay {ipdStats.averageStayDays ?? 0} days</div>
+              </div>
+              <div className={styles.insightCard}>
+                <div className={styles.insightLabel}>Upcoming Discharges</div>
+                <div className={styles.insightValue}>{ipdStats.upcomingDischarges ?? 0}</div>
+                <div className={styles.insightSub}>{ipdStats.dischargesLast7 ?? 0} in last 7d</div>
+              </div>
+              <div className={styles.insightCard}>
+                <div className={styles.insightLabel}>Rooms</div>
+                <div className={styles.insightValue}>{ipdStats.occupiedRooms ?? 0}/{ipdStats.totalRooms ?? 0}</div>
+                <div className={styles.insightSub}>{ipdStats.totalBeds ?? 0} beds total</div>
+              </div>
+            </div>
+            {ipdStats.roomTypeBreakdown?.length > 0 && (
+              <div className={styles.roomBreakdown}>
+                <div className={styles.roomBreakdownTitle}>Room utilization by type</div>
+                <div className={styles.roomBreakdownGrid}>
+                  {ipdStats.roomTypeBreakdown.slice(0, 4).map((room) => (
+                    <div key={room.roomType} className={styles.breakdownRow}>
+                      <span className={styles.breakdownLabel}>{room.roomType.replace('_', ' ')}</span>
+                      <span className={styles.breakdownValue}>{room.utilizationPct?.toFixed ? room.utilizationPct.toFixed(1) : room.utilizationPct}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+        )}
         {referralData?.bySource?.length > 0 && (
           <div className={styles.apptList}>
             {referralData.bySource.slice(0, 5).map((row) => (
@@ -160,4 +225,15 @@ function formatTime(t) {
   const [h, m] = t.split(':');
   const hour = parseInt(h);
   return `${hour > 12 ? hour - 12 : hour}:${m} ${hour >= 12 ? 'PM' : 'AM'}`;
+}
+
+function formatCurrency(val) {
+  if (val === undefined || val === null) return 'Rs 0';
+  return `Rs ${Number(val || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+}
+
+function maybePercent(val) {
+  if (typeof val === 'number') return `${val.toFixed(1)}%`;
+  if (typeof val === 'string' && val.trim().length) return val;
+  return '-';
 }

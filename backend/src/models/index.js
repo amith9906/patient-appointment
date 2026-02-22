@@ -6,11 +6,13 @@ const Department = require('./Department');
 const Doctor = require('./Doctor');
 const Patient = require('./Patient');
 const Appointment = require('./Appointment');
+const DoctorAvailability = require('./DoctorAvailability');
 const Vitals = require('./Vitals');
 const Medication = require('./Medication');
 const Prescription = require('./Prescription');
 const Lab = require('./Lab');
 const LabTest = require('./LabTest');
+const LabReportTemplate = require('./LabReportTemplate');
 const Report = require('./Report');
 const PasswordOtp = require('./PasswordOtp');
 const BillItem = require('./BillItem');
@@ -28,6 +30,14 @@ const MedicationBatch = require('./MedicationBatch');
 const StockLedgerEntry = require('./StockLedgerEntry');
 const PackagePlan = require('./PackagePlan');
 const PatientPackage = require('./PatientPackage');
+const DoctorLeave = require('./DoctorLeave');
+const TreatmentPlan = require('./TreatmentPlan');
+const Room = require('./Room');
+const IPDAdmission = require('./IPDAdmission');
+const IPDNote = require('./IPDNote');
+const OTSchedule = require('./OTSchedule');
+const IPDBillItem = require('./IPDBillItem');
+const IPDPayment = require('./IPDPayment');
 
 // Hospital -> HospitalSettings (one-to-one)
 Hospital.hasOne(HospitalSettings, { foreignKey: 'hospitalId', as: 'settings' });
@@ -40,6 +50,10 @@ Department.belongsTo(Hospital, { foreignKey: 'hospitalId', as: 'hospital' });
 // Hospital -> Doctor (one-to-many)
 Hospital.hasMany(Doctor, { foreignKey: 'hospitalId', as: 'doctors' });
 Doctor.belongsTo(Hospital, { foreignKey: 'hospitalId', as: 'hospital' });
+
+// Doctor -> Availability (one-to-many)
+Doctor.hasMany(DoctorAvailability, { foreignKey: 'doctorId', as: 'availabilities' });
+DoctorAvailability.belongsTo(Doctor, { foreignKey: 'doctorId', as: 'doctor' });
 
 // Department -> Doctor (one-to-many)
 Department.hasMany(Doctor, { foreignKey: 'departmentId', as: 'doctors' });
@@ -56,6 +70,10 @@ Appointment.belongsTo(Doctor, { foreignKey: 'doctorId', as: 'doctor' });
 // Patient -> Appointment (one-to-many)
 Patient.hasMany(Appointment, { foreignKey: 'patientId', as: 'appointments' });
 Appointment.belongsTo(Patient, { foreignKey: 'patientId', as: 'patient' });
+
+// PatientPackage -> Appointment (one-to-many)
+PatientPackage.hasMany(Appointment, { foreignKey: 'patientPackageId', as: 'appointments' });
+Appointment.belongsTo(PatientPackage, { foreignKey: 'patientPackageId', as: 'packageAssignment' });
 
 // Hospital -> Lab (one-to-many)
 Hospital.hasMany(Lab, { foreignKey: 'hospitalId', as: 'labs' });
@@ -92,6 +110,18 @@ Report.belongsTo(Patient, { foreignKey: 'patientId', as: 'patient' });
 // Appointment -> Report (one-to-many)
 Appointment.hasMany(Report, { foreignKey: 'appointmentId', as: 'reports' });
 Report.belongsTo(Appointment, { foreignKey: 'appointmentId', as: 'appointment' });
+
+// LabTest -> Report (one-to-one: a lab test can have one uploaded report file)
+LabTest.hasOne(Report, { foreignKey: 'labTestId', as: 'report' });
+Report.belongsTo(LabTest, { foreignKey: 'labTestId', as: 'labTest' });
+
+// Hospital -> LabReportTemplate (one-to-many)
+Hospital.hasMany(LabReportTemplate, { foreignKey: 'hospitalId', as: 'labReportTemplates' });
+LabReportTemplate.belongsTo(Hospital, { foreignKey: 'hospitalId', as: 'hospital' });
+
+// LabReportTemplate -> LabTest (one-to-many)
+LabReportTemplate.hasMany(LabTest, { foreignKey: 'templateId', as: 'labTests' });
+LabTest.belongsTo(LabReportTemplate, { foreignKey: 'templateId', as: 'template' });
 
 // Hospital -> Patient (one-to-many)
 Hospital.hasMany(Patient, { foreignKey: 'hospitalId', as: 'patients' });
@@ -249,6 +279,64 @@ StockPurchaseReturn.belongsTo(Hospital, { foreignKey: 'hospitalId', as: 'hospita
 User.hasMany(StockPurchaseReturn, { foreignKey: 'createdByUserId', as: 'createdStockPurchaseReturns' });
 StockPurchaseReturn.belongsTo(User, { foreignKey: 'createdByUserId', as: 'createdBy' });
 
+// Doctor -> DoctorLeave (one-to-many)
+Doctor.hasMany(DoctorLeave, { foreignKey: 'doctorId', as: 'leaves' });
+DoctorLeave.belongsTo(Doctor, { foreignKey: 'doctorId', as: 'doctor' });
+
+// Room associations
+Hospital.hasMany(Room, { foreignKey: 'hospitalId', as: 'rooms' });
+Room.belongsTo(Hospital, { foreignKey: 'hospitalId', as: 'hospital' });
+
+// IPDAdmission associations
+Hospital.hasMany(IPDAdmission, { foreignKey: 'hospitalId', as: 'ipdAdmissions' });
+IPDAdmission.belongsTo(Hospital, { foreignKey: 'hospitalId', as: 'hospital' });
+Patient.hasMany(IPDAdmission, { foreignKey: 'patientId', as: 'ipdAdmissions' });
+IPDAdmission.belongsTo(Patient, { foreignKey: 'patientId', as: 'patient' });
+Doctor.hasMany(IPDAdmission, { foreignKey: 'doctorId', as: 'ipdAdmissions' });
+IPDAdmission.belongsTo(Doctor, { foreignKey: 'doctorId', as: 'doctor' });
+Room.hasMany(IPDAdmission, { foreignKey: 'roomId', as: 'admissions' });
+IPDAdmission.belongsTo(Room, { foreignKey: 'roomId', as: 'room' });
+
+// IPDNote associations
+IPDAdmission.hasMany(IPDNote, { foreignKey: 'admissionId', as: 'ipdNotes' });
+IPDNote.belongsTo(IPDAdmission, { foreignKey: 'admissionId', as: 'admission' });
+Doctor.hasMany(IPDNote, { foreignKey: 'doctorId', as: 'ipdNotes' });
+IPDNote.belongsTo(Doctor, { foreignKey: 'doctorId', as: 'doctor' });
+
+// OTSchedule associations
+Hospital.hasMany(OTSchedule, { foreignKey: 'hospitalId', as: 'otSchedules' });
+OTSchedule.belongsTo(Hospital, { foreignKey: 'hospitalId', as: 'hospital' });
+Patient.hasMany(OTSchedule, { foreignKey: 'patientId', as: 'otSchedules' });
+OTSchedule.belongsTo(Patient, { foreignKey: 'patientId', as: 'patient' });
+Doctor.hasMany(OTSchedule, { foreignKey: 'surgeonId', as: 'otSchedules' });
+OTSchedule.belongsTo(Doctor, { foreignKey: 'surgeonId', as: 'surgeon' });
+IPDAdmission.hasMany(OTSchedule, { foreignKey: 'admissionId', as: 'otSchedules' });
+OTSchedule.belongsTo(IPDAdmission, { foreignKey: 'admissionId', as: 'admission' });
+
+// IPDBillItem associations
+IPDAdmission.hasMany(IPDBillItem, { foreignKey: 'admissionId', as: 'billItems' });
+IPDBillItem.belongsTo(IPDAdmission, { foreignKey: 'admissionId', as: 'admission' });
+Hospital.hasMany(IPDBillItem, { foreignKey: 'hospitalId', as: 'ipdBillItems' });
+IPDBillItem.belongsTo(Hospital, { foreignKey: 'hospitalId', as: 'hospital' });
+PatientPackage.hasMany(IPDBillItem, { foreignKey: 'packageId', as: 'billItems' });
+IPDBillItem.belongsTo(PatientPackage, { foreignKey: 'packageId', as: 'package' });
+
+// IPDPayment associations
+IPDAdmission.hasMany(IPDPayment, { foreignKey: 'admissionId', as: 'payments' });
+IPDPayment.belongsTo(IPDAdmission, { foreignKey: 'admissionId', as: 'admission' });
+Hospital.hasMany(IPDPayment, { foreignKey: 'hospitalId', as: 'ipdPayments' });
+IPDPayment.belongsTo(Hospital, { foreignKey: 'hospitalId', as: 'hospital' });
+User.hasMany(IPDPayment, { foreignKey: 'createdByUserId', as: 'recordedPayments' });
+IPDPayment.belongsTo(User, { foreignKey: 'createdByUserId', as: 'recordedBy' });
+
+// TreatmentPlan associations
+Hospital.hasMany(TreatmentPlan, { foreignKey: 'hospitalId', as: 'treatmentPlans' });
+TreatmentPlan.belongsTo(Hospital, { foreignKey: 'hospitalId', as: 'hospital' });
+Patient.hasMany(TreatmentPlan, { foreignKey: 'patientId', as: 'treatmentPlans' });
+TreatmentPlan.belongsTo(Patient, { foreignKey: 'patientId', as: 'patient' });
+Doctor.hasMany(TreatmentPlan, { foreignKey: 'doctorId', as: 'treatmentPlans' });
+TreatmentPlan.belongsTo(Doctor, { foreignKey: 'doctorId', as: 'doctor' });
+
 // Hospital -> PackagePlan (one-to-many)
 Hospital.hasMany(PackagePlan, { foreignKey: 'hospitalId', as: 'packagePlans' });
 PackagePlan.belongsTo(Hospital, { foreignKey: 'hospitalId', as: 'hospital' });
@@ -283,6 +371,7 @@ module.exports = {
   Prescription,
   Lab,
   LabTest,
+  LabReportTemplate,
   Report,
   PasswordOtp,
   BillItem,
@@ -300,4 +389,13 @@ module.exports = {
   StockLedgerEntry,
   PackagePlan,
   PatientPackage,
+  DoctorLeave,
+  TreatmentPlan,
+  Room,
+  IPDAdmission,
+  IPDNote,
+  OTSchedule,
+  IPDBillItem,
+  IPDPayment,
+  DoctorAvailability,
 };

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import api, { pdfAPI, vitalsAPI, appointmentAPI, labAPI, reportAPI, packageAPI } from '../../services/api';
+import api, { pdfAPI, vitalsAPI, appointmentAPI, labAPI, reportAPI, packageAPI, labReportTemplateAPI } from '../../services/api';
 import { toast } from 'react-toastify';
 import SearchableSelect from '../../components/SearchableSelect';
 
@@ -182,6 +182,8 @@ export default function AppointmentDetail() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [saving, setSaving]               = useState(false);
   const [downloading, setDownloading]     = useState('');
+  const [dischargeModal, setDischargeModal] = useState(false);
+  const [dischargeForm, setDischargeForm] = useState({ conditionAtDischarge: 'Stable', dischargeDate: new Date().toISOString().split('T')[0], dischargeNotes: '' });
 
   // Prescription form
   const [rxForm, setRxForm]   = useState(INIT_RX);
@@ -220,7 +222,8 @@ export default function AppointmentDetail() {
   const [labTests, setLabTests] = useState([]);
   const [labs, setLabs] = useState([]);
   const [labOrderOpen, setLabOrderOpen] = useState(false);
-  const [labOrderForm, setLabOrderForm] = useState({ testName: '', category: '', labId: '', price: '', normalRange: '', unit: '' });
+  const [labOrderForm, setLabOrderForm] = useState({ testName: '', category: '', labId: '', price: '', normalRange: '', unit: '', templateId: '' });
+  const [labTemplates, setLabTemplates] = useState([]);
   const [labOrdering, setLabOrdering] = useState(false);
 
   // Documents
@@ -254,6 +257,7 @@ export default function AppointmentDetail() {
       setBillItems((b.data || []).map(i => ({ ...i, _key: i.id })));
       setLabTests(lt.data || []);
       setLabs(lb.data || []);
+      labReportTemplateAPI.getAll().then(r => setLabTemplates(r.data || [])).catch(() => {});
 
       // Load vitals if recorded
       if (v.data && v.data.id) {
@@ -603,7 +607,7 @@ export default function AppointmentDetail() {
       });
       const res = await labAPI.getAllTests({ appointmentId: id });
       setLabTests(res.data || []);
-      setLabOrderForm({ testName: '', category: '', labId: '', price: '', normalRange: '', unit: '' });
+      setLabOrderForm({ testName: '', category: '', labId: '', price: '', normalRange: '', unit: '', templateId: '' });
       setLabOrderOpen(false);
       toast.success('Lab test ordered');
     } catch (err) { toast.error(err.response.data.message || 'Failed to order test'); }
@@ -616,6 +620,14 @@ export default function AppointmentDetail() {
       setLabTests(prev => prev.map(t => t.id === testId ? { ...t, status: 'cancelled' } : t));
       toast.success('Test cancelled');
     } catch { toast.error('Failed to cancel test'); }
+  };
+
+  const refreshLabTests = async () => {
+    try {
+      const res = await labAPI.getAllTests({ appointmentId: id });
+      setLabTests(res.data || []);
+      toast.info('Lab tests refreshed');
+    } catch { toast.error('Failed to refresh'); }
   };
 
   const uploadDoc = async (e) => {
@@ -651,12 +663,30 @@ export default function AppointmentDetail() {
     } catch { toast.error('Download failed'); }
   };
 
+  // Open a report file inline in a new browser tab (PDF / image renders natively)
+  const viewFile = async (report) => {
+    try {
+      const res = await reportAPI.download(report.id);
+      const blob = new Blob([res.data], { type: report.mimeType || 'application/octet-stream' });
+      window.open(URL.createObjectURL(blob), '_blank');
+    } catch { toast.error('Failed to open file'); }
+  };
+
   const downloadPDF = async (type) => {
     setDownloading(type);
     try {
       const res = type === 'prescription' ? await pdfAPI.prescription(id) : await pdfAPI.bill(id);
       downloadBlob(res.data, `${type}-${appt.appointmentNumber || id}.pdf`);
     } catch { toast.error(`Failed to download ${type} PDF`); } finally { setDownloading(''); }
+  };
+
+  const downloadDischargeSummary = async () => {
+    setDownloading('discharge');
+    try {
+      const res = await pdfAPI.dischargeSummary(id, dischargeForm);
+      downloadBlob(res.data, `discharge-summary-${appt.appointmentNumber || id}.pdf`);
+      toast.success('Discharge summary downloaded');
+    } catch { toast.error('Failed to generate discharge summary'); } finally { setDownloading(''); }
   };
 
   const consumePackageVisit = async (assignment) => {
@@ -715,8 +745,84 @@ export default function AppointmentDetail() {
             className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
             {downloading === 'bill' ? 'Downloading...' : 'Bill PDF'}
           </button>
+          <button onClick={() => setDischargeModal(true)} disabled={!!downloading}
+            className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700 disabled:opacity-50 transition-colors">
+            📄 Discharge Summary
+          </button>
         </div>
       </div>
+
+      {/* Discharge Summary Modal */}
+      {dischargeModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl">
+            <div className="p-5 border-b flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-gray-800">Discharge Summary</h3>
+                <p className="text-xs text-gray-400 mt-0.5">Generate PDF discharge summary for {appt.patient?.name}</p>
+              </div>
+              <button onClick={() => setDischargeModal(false)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+            </div>
+            <div className="p-5 space-y-4">
+              {/* Preview of what will be included */}
+              <div className="bg-gray-50 rounded-xl p-4 text-xs space-y-1.5">
+                <div className="font-semibold text-gray-600 mb-2 text-sm">Will include from appointment:</div>
+                {[
+                  ['Chief Complaint', appt.reason],
+                  ['Diagnosis', appt.diagnosis],
+                  ['Treatment Given', appt.treatmentDone],
+                  ['Advice', appt.advice],
+                  ['Follow-up Date', appt.followUpDate],
+                ].map(([label, val]) => val && (
+                  <div key={label} className="flex gap-2">
+                    <span className="text-gray-400 min-w-[110px]">{label}:</span>
+                    <span className="text-gray-700 line-clamp-1">{val}</span>
+                  </div>
+                ))}
+                {appt.prescriptions?.length > 0 && (
+                  <div className="flex gap-2">
+                    <span className="text-gray-400 min-w-[110px]">Medicines:</span>
+                    <span className="text-gray-700">{appt.prescriptions.length} prescription(s)</span>
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-700 block mb-1">Condition at Discharge</label>
+                <select value={dischargeForm.conditionAtDischarge}
+                  onChange={e => setDischargeForm(f => ({ ...f, conditionAtDischarge: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-400">
+                  {['Stable', 'Improved', 'LAMA', 'Expired', 'Transferred'].map(v => (
+                    <option key={v} value={v}>{v}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-700 block mb-1">Discharge Date</label>
+                <input type="date" value={dischargeForm.dischargeDate}
+                  onChange={e => setDischargeForm(f => ({ ...f, dischargeDate: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-400" />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-700 block mb-1">Additional Discharge Notes</label>
+                <textarea rows={3} value={dischargeForm.dischargeNotes}
+                  onChange={e => setDischargeForm(f => ({ ...f, dischargeNotes: e.target.value }))}
+                  placeholder="Any additional instructions or notes..."
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-400" />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setDischargeModal(false)}
+                  className="flex-1 border border-gray-200 rounded-lg py-2.5 text-sm text-gray-600 hover:bg-gray-50">
+                  Cancel
+                </button>
+                <button onClick={downloadDischargeSummary} disabled={downloading === 'discharge'}
+                  className="flex-1 bg-purple-600 text-white rounded-lg py-2.5 text-sm font-bold hover:bg-purple-700 disabled:opacity-50 transition-colors">
+                  {downloading === 'discharge' ? 'Generating...' : '📄 Download PDF'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Patient Info */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
@@ -1227,8 +1333,12 @@ export default function AppointmentDetail() {
               </div>
             )}
             {allergyWarning && (
-              <div className="mt-1.5 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-700 font-medium">
-                Patient has a recorded allergy that may relate to this medication
+              <div className="mt-1.5 bg-red-100 border-2 border-red-500 rounded-lg px-3 py-2.5 text-sm text-red-800 font-semibold flex items-start gap-2">
+                <span className="text-red-600 text-base">⚠</span>
+                <div>
+                  <div>ALLERGY ALERT — Patient may be allergic to this medicine!</div>
+                  <div className="text-xs font-normal mt-0.5 text-red-700">Recorded allergies: {appt.patient.allergies}</div>
+                </div>
               </div>
             )}
             {medOpen && medSearch && (
@@ -1428,10 +1538,17 @@ export default function AppointmentDetail() {
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Lab Tests</h3>
-          <button onClick={() => setLabOrderOpen(o => !o)}
-            className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1 rounded-lg hover:bg-indigo-100 font-medium">
-            {labOrderOpen ? 'Cancel' : '+ Order Test'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={refreshLabTests}
+              className="text-xs bg-gray-50 text-gray-500 border border-gray-200 px-2.5 py-1 rounded-lg hover:bg-gray-100 font-medium"
+              title="Refresh to see latest results from lab">
+              ↻ Refresh
+            </button>
+            <button onClick={() => setLabOrderOpen(o => !o)}
+              className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1 rounded-lg hover:bg-indigo-100 font-medium">
+              {labOrderOpen ? 'Cancel' : '+ Order Test'}
+            </button>
+          </div>
         </div>
 
         {/* Order form */}
@@ -1480,6 +1597,16 @@ export default function AppointmentDetail() {
                   placeholder="e.g. x10^3/uL"
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
               </div>
+              <div className="md:col-span-2">
+                <label className="text-xs font-medium text-gray-500 block mb-1">Report Template <span className="text-gray-400">(lab tech will fill structured values)</span></label>
+                <select value={labOrderForm.templateId} onChange={e => setLabOrderForm(f => ({ ...f, templateId: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white">
+                  <option value="">— None (free text) —</option>
+                  {labTemplates.map(tpl => (
+                    <option key={tpl.id} value={tpl.id}>{tpl.name}{tpl.category ? ` (${tpl.category})` : ''}</option>
+                  ))}
+                </select>
+              </div>
             </div>
             <button type="submit" disabled={labOrdering}
               className="w-full bg-indigo-600 text-white py-2 rounded-lg text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-colors">
@@ -1489,31 +1616,125 @@ export default function AppointmentDetail() {
         )}
 
         {/* Tests list */}
+        {/* Results available banner */}
+        {labTests.some(t => t.status === 'completed') && (
+          <div className="mb-3 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700 font-semibold flex items-center gap-2">
+            ✅ Lab results are available — review the published reports below.
+          </div>
+        )}
+
         {labTests.length === 0 ? (
           <div className="text-sm text-gray-400 italic text-center py-4">No lab tests ordered for this appointment</div>
         ) : (
           <div className="space-y-2">
             {labTests.map(t => {
               const statusColors = { ordered: 'bg-blue-100 text-blue-700', sample_collected: 'bg-yellow-100 text-yellow-700', processing: 'bg-orange-100 text-orange-700', completed: 'bg-green-100 text-green-700', cancelled: 'bg-red-100 text-red-500' };
-              const statusLabels = { ordered: 'Ordered', sample_collected: 'Sample Collected', processing: 'Processing', completed: 'Completed', cancelled: 'Cancelled' };
+              const statusLabels = { ordered: 'Ordered', sample_collected: 'Sample Collected', processing: 'Processing', completed: 'Results Published', cancelled: 'Cancelled' };
               return (
-                <div key={t.id} className="bg-gray-50 rounded-xl p-3 border border-gray-100">
+                <div key={t.id} className={`rounded-xl p-3 border ${t.status === 'completed' ? 'bg-green-50/30 border-green-200' : 'bg-gray-50 border-gray-100'}`}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-sm text-gray-800">{t.testName}
-                        {t.testCode && <span className="text-xs font-normal text-gray-400 ml-1">({t.testCode})</span>}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-sm text-gray-800">{t.testName}
+                          {t.testCode && <span className="text-xs font-normal text-gray-400 ml-1">({t.testCode})</span>}
+                        </span>
+                        {t.isAbnormal && t.status === 'completed' && (
+                          <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-semibold">⚠ Abnormal Values</span>
+                        )}
                       </div>
                       <div className="text-xs text-gray-400 mt-0.5 flex flex-wrap gap-x-3">
                         {t.category && <span>{t.category}</span>}
-                        {t.lab.name && <span>Lab: {t.lab.name}</span>}
+                        {t.lab?.name && <span>Lab: {t.lab.name}</span>}
                         {t.price > 0 && <span>Rs {Number(t.price).toFixed(2)}</span>}
                         {t.normalRange && <span>Normal: {t.normalRange} {t.unit}</span>}
+                        {t.status === 'completed' && t.completedDate && (
+                          <span className="text-green-600 font-medium">
+                            ✓ Published {new Date(t.completedDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                          </span>
+                        )}
                       </div>
-                      {t.status === 'completed' && t.result && (
+                      {/* ── Structured template result ── */}
+                      {t.status === 'completed' && t.template && t.templateValues && (
+                        <div className="mt-2 border border-indigo-100 rounded-xl overflow-hidden">
+                          <div className="bg-indigo-600 px-3 py-2 flex items-center justify-between">
+                            <span className="text-xs font-semibold text-white">🧪 {t.template.name}</span>
+                            <div className="flex items-center gap-2">
+                              {t.isAbnormal && <span className="text-xs bg-red-500 text-white px-2 py-0.5 rounded-full font-semibold">⚠ Abnormal Values</span>}
+                              <span className="text-xs text-indigo-200">Lab Report</span>
+                            </div>
+                          </div>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                            <thead>
+                              <tr style={{ background: '#f8fafc' }}>
+                                <th style={{ padding: '5px 10px', textAlign: 'left', color: '#64748b', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>Parameter</th>
+                                <th style={{ padding: '5px 10px', textAlign: 'center', color: '#64748b', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>Result</th>
+                                <th style={{ padding: '5px 10px', textAlign: 'center', color: '#64748b', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>Unit</th>
+                                <th style={{ padding: '5px 10px', textAlign: 'center', color: '#64748b', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>Normal Range</th>
+                                <th style={{ padding: '5px 10px', textAlign: 'center', color: '#64748b', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(t.template.fields || []).map((field, fi) => {
+                                const val = t.templateValues[field.key];
+                                const isAbn = (t.abnormalFields || []).includes(field.key);
+                                return (
+                                  <tr key={field.key} style={{ borderTop: '1px solid #f1f5f9', background: isAbn ? '#fff1f2' : fi % 2 === 0 ? '#fff' : '#fafafa' }}>
+                                    <td style={{ padding: '6px 10px', fontWeight: 500, color: '#1e293b' }}>{field.label}</td>
+                                    <td style={{ padding: '6px 10px', textAlign: 'center', fontWeight: 700, color: isAbn ? '#dc2626' : '#166534', fontSize: 13 }}>{val || '—'}</td>
+                                    <td style={{ padding: '6px 10px', textAlign: 'center', color: '#64748b' }}>{field.unit || '—'}</td>
+                                    <td style={{ padding: '6px 10px', textAlign: 'center', color: '#64748b' }}>{field.normalRange || '—'}</td>
+                                    <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                                      <span style={{ background: isAbn ? '#fee2e2' : '#dcfce7', color: isAbn ? '#dc2626' : '#15803d', borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>
+                                        {isAbn ? '⚠ HIGH/LOW' : '✓ Normal'}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                          {t.technicianNotes && (
+                            <div style={{ padding: '6px 10px', background: '#f8fafc', borderTop: '1px solid #f1f5f9', fontSize: 11, color: '#64748b' }}>
+                              <strong>Tech notes:</strong> {t.technicianNotes}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* ── Freetext result (no template) ── */}
+                      {t.status === 'completed' && !t.template && (t.resultValue || t.result) && (
                         <div className="mt-1.5 bg-green-50 border border-green-100 rounded-lg px-2.5 py-1.5 text-xs text-green-800">
-                          <strong>Result:</strong> {t.resultValue && <span className="font-bold mr-1">{t.resultValue}</span>}
-                          {t.result}
+                          <strong>Result:</strong>
+                          {t.resultValue && <span className="font-bold mx-1">{t.resultValue}</span>}
+                          {t.result && t.result !== t.resultValue && <span>{t.result}</span>}
                           {t.isAbnormal && <span className="ml-1 bg-red-100 text-red-600 px-1 py-0.5 rounded">Abnormal</span>}
+                        </div>
+                      )}
+                      {t.status === 'completed' && !t.template && !t.resultValue && !t.result && (
+                        <div className="mt-1.5 bg-gray-50 border border-gray-100 rounded-lg px-2.5 py-1.5 text-xs text-gray-400 italic">
+                          No detailed result values recorded — check with lab technician
+                        </div>
+                      )}
+                      {t.status === 'completed' && !t.template && t.technicianNotes && (
+                        <div className="mt-1 text-xs text-gray-500 italic">Notes: {t.technicianNotes}</div>
+                      )}
+                      {/* Uploaded report file — scoped to this patient only */}
+                      {t.status === 'completed' && t.report && (
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="text-xs text-indigo-600 bg-indigo-50 border border-indigo-100 rounded px-2 py-0.5 font-medium">
+                            📎 {t.report.originalName}
+                            {t.report.fileSize && <span className="text-gray-400 ml-1">({(t.report.fileSize / 1024).toFixed(0)} KB)</span>}
+                          </span>
+                          <button
+                            onClick={() => viewFile(t.report)}
+                            className="text-xs bg-indigo-600 text-white px-2.5 py-0.5 rounded-lg hover:bg-indigo-700 font-medium transition-colors">
+                            View Online
+                          </button>
+                          <button
+                            onClick={() => downloadDoc(t.report)}
+                            className="text-xs bg-gray-600 text-white px-2.5 py-0.5 rounded-lg hover:bg-gray-700 font-medium transition-colors">
+                            Download
+                          </button>
                         </div>
                       )}
                     </div>

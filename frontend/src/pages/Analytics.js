@@ -14,7 +14,8 @@ import {
   Pie,
   Cell,
 } from 'recharts';
-import { appointmentAPI, expenseAPI, patientAPI } from '../services/api';
+import styles from './Page.module.css';
+import { appointmentAPI, expenseAPI, ipdAPI, patientAPI, packageAPI, doctorAPI } from '../services/api';
 
 const COLORS = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#dc2626', '#0891b2', '#64748b'];
 
@@ -34,12 +35,22 @@ const ICON_BY_KEY = {
 const resolveIcon = (icon) => ICON_BY_KEY[icon] || icon || '•';
 
 const currency = (val) => `Rs ${Number(val || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+const formatPercent = (val) => {
+  if (typeof val === 'number') return `${val.toFixed(1)}%`;
+  if (typeof val === 'string' && val.trim().length) return val;
+  return '-';
+};
+const sumRules = (rules) => Object.values(rules || {}).reduce((sum, value) => sum + Number(value || 0), 0);
 
 export default function Analytics() {
   const [data, setData] = useState(null);
   const [expData, setExpData] = useState(null);
   const [refData, setRefData] = useState(null);
   const [ptData, setPtData] = useState(null);
+  const [ipdStats, setIpdStats] = useState(null);
+  const [packageAnalytics, setPackageAnalytics] = useState(null);
+  const [availabilitySummary, setAvailabilitySummary] = useState(null);
+  const [revenueOverview, setRevenueOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -61,12 +72,20 @@ export default function Analytics() {
       expenseAPI.getAnalytics(commonParams).catch(() => ({ data: null })),
       patientAPI.getReferralAnalytics(referralParams).catch(() => ({ data: null })),
       appointmentAPI.getPatientAnalytics(commonParams).catch(() => ({ data: null })),
+      packageAPI.getAnalytics(commonParams).catch(() => ({ data: null })),
+      ipdAPI.getStats(commonParams).catch(() => ({ data: null })),
+      doctorAPI.getAvailabilitySummary(commonParams).catch(() => ({ data: null })),
+      appointmentAPI.getRevenueOverview(commonParams).catch(() => ({ data: null })),
     ])
-      .then(([apptRes, expRes, refRes, ptRes]) => {
+      .then(([apptRes, expRes, refRes, ptRes, pkgRes, ipdRes, availRes, revRes]) => {
         setData(apptRes.data);
         setExpData(expRes.data);
         setRefData(refRes.data);
         setPtData(ptRes.data);
+        setPackageAnalytics(pkgRes.data || null);
+        setIpdStats(ipdRes.data || null);
+        setAvailabilitySummary(availRes.data || null);
+        setRevenueOverview(revRes.data || null);
       })
       .finally(() => setLoading(false));
   };
@@ -124,6 +143,26 @@ export default function Analytics() {
   const latestDay = dayWise[dayWise.length - 1] || { label: 'N/A', amount: 0, paidAmount: 0, pendingAmount: 0 };
   const latestWeek = weekWise[weekWise.length - 1] || { label: 'N/A', amount: 0, paidAmount: 0, pendingAmount: 0 };
   const latestMonth = monthWise[monthWise.length - 1] || { label: 'N/A', amount: 0, paidAmount: 0, pendingAmount: 0 };
+
+  const ipdInsightRows = ipdStats ? [
+    { label: 'Admitted', value: ipdStats.totalAdmitted ?? 0, note: `${ipdStats.dischargedToday ?? 0} discharged today` },
+    { label: 'Occupancy', value: formatPercent(ipdStats.occupancyRate), note: `${ipdStats.availableBeds ?? 0} beds free` },
+    { label: 'Revenue (30d)', value: currency(ipdStats.revenueThisMonth), note: `GST ${currency(ipdStats.gstCollected)}` },
+    { label: 'Pending Dues', value: currency(ipdStats.pendingDues), note: 'Balance awaiting collection' },
+  ] : [];
+  const packageSummary = packageAnalytics?.summary;
+  const packageRows = packageSummary ? [
+    { label: 'Assignments', value: packageSummary.totalAssignments || 0, note: `${packageSummary.activeAssignments || 0} active` },
+    { label: 'Utilization', value: formatPercent(packageSummary.utilizationPct), note: `${packageSummary.remainingVisits || 0} visits left` },
+    { label: 'Revenue', value: currency(packageSummary.totalRevenue), note: `${packageSummary.completedAssignments || 0} completed` },
+    { label: 'Visits used', value: `${packageSummary.usedVisits || 0}/${packageSummary.totalVisits || 0}`, note: 'Patient consumption' },
+  ] : [];
+  const availabilityRows = availabilitySummary ? [
+    { label: 'Doctors', value: availabilitySummary.doctorCount ?? 0, note: `${availabilitySummary.activeRules || 0} rules` },
+    { label: 'Rules today', value: sumRules(availabilitySummary.rulesByDay), note: 'Slots defined per weekday' },
+    { label: 'Leaves today', value: availabilitySummary.leavesToday ?? 0, note: 'Blocks the schedule' },
+    { label: 'Upcoming leaves', value: availabilitySummary.upcomingLeaves ?? 0, note: 'Next 30 days' },
+  ] : [];
 
   const onApplyFilter = () => {
     const nextRange = { from, to };
@@ -195,10 +234,56 @@ export default function Analytics() {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       <h2 className="text-xl font-bold text-gray-800">Analytics</h2>
+      {(ipdInsightRows.length || packageRows.length || availabilityRows.length) && (
+        <div className="space-y-4">
+          {ipdInsightRows.length > 0 && (
+            <div>
+              <div className="text-xs uppercase tracking-wide text-gray-500 mb-2">IPD snapshot</div>
+              <div className={styles.strip}>
+                {ipdInsightRows.map((item) => (
+                  <div key={item.label} className={styles.stripItem}>
+                    <div className={styles.stripLabel}>{item.label}</div>
+                    <div className={styles.stripValue}>{item.value}</div>
+                    <div className={styles.stripNote}>{item.note}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {packageRows.length > 0 && (
+            <div>
+              <div className="text-xs uppercase tracking-wide text-gray-500 mb-2">Package metrics</div>
+              <div className={styles.strip}>
+                {packageRows.map((item) => (
+                  <div key={item.label} className={styles.stripItem}>
+                    <div className={styles.stripLabel}>{item.label}</div>
+                    <div className={styles.stripValue}>{item.value}</div>
+                    <div className={styles.stripNote}>{item.note}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {availabilityRows.length > 0 && (
+            <div>
+              <div className="text-xs uppercase tracking-wide text-gray-500 mb-2">Availability overview</div>
+              <div className={styles.strip}>
+                {availabilityRows.map((item) => (
+                  <div key={item.label} className={styles.stripItem}>
+                    <div className={styles.stripLabel}>{item.label}</div>
+                    <div className={styles.stripValue}>{item.value}</div>
+                    <div className={styles.stripNote}>{item.note}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Tab selector */}
-      <div style={{ display: 'flex', gap: 8 }}>
-        {[['billing', 'Billing & Revenue'], ['patients', 'Patient Insights']].map(([key, label]) => (
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {[['billing', 'Billing & Revenue'], ['revenue', 'Revenue Overview'], ['patients', 'Patient Insights']].map(([key, label]) => (
           <button
             key={key}
             type="button"
@@ -298,22 +383,37 @@ export default function Analytics() {
       {expData && (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 space-y-4">
           <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide">Profit Overview</h3>
-          <div className="grid grid-cols-3 gap-4">
-            <div className="bg-blue-50 rounded-xl p-4 text-center">
-              <div className="text-xs text-blue-500 font-medium uppercase tracking-wide mb-1">Total Revenue</div>
-              <div className="text-2xl font-bold text-blue-700">{currency(summary.totalAmount)}</div>
-            </div>
-            <div className="bg-red-50 rounded-xl p-4 text-center">
-              <div className="text-xs text-red-500 font-medium uppercase tracking-wide mb-1">Total Expenses</div>
-              <div className="text-2xl font-bold text-red-600">{currency(expData.totalExpenses)}</div>
-            </div>
-            <div className={`rounded-xl p-4 text-center ${(summary.totalAmount - expData.totalExpenses) >= 0 ? 'bg-green-50' : 'bg-orange-50'}`}>
-              <div className={`text-xs font-medium uppercase tracking-wide mb-1 ${(summary.totalAmount - expData.totalExpenses) >= 0 ? 'text-green-500' : 'text-orange-500'}`}>Net Profit</div>
-              <div className={`text-2xl font-bold ${(summary.totalAmount - expData.totalExpenses) >= 0 ? 'text-green-700' : 'text-orange-600'}`}>
-                {currency(summary.totalAmount - expData.totalExpenses)}
-              </div>
-            </div>
-          </div>
+          {(() => {
+            const opdRevenue = summary.totalAmount;
+            const ipdRev = data.ipdRevenue || 0;
+            const combinedRevenue = opdRevenue + ipdRev;
+            const netProfit = combinedRevenue - expData.totalExpenses;
+            return (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-blue-50 rounded-xl p-4 text-center">
+                    <div className="text-xs text-blue-500 font-medium uppercase tracking-wide mb-1">OPD Revenue</div>
+                    <div className="text-xl font-bold text-blue-700">{currency(opdRevenue)}</div>
+                    <div className="text-xs text-blue-400 mt-1">Appointments</div>
+                  </div>
+                  <div className="bg-indigo-50 rounded-xl p-4 text-center">
+                    <div className="text-xs text-indigo-500 font-medium uppercase tracking-wide mb-1">IPD Revenue</div>
+                    <div className="text-xl font-bold text-indigo-700">{currency(ipdRev)}</div>
+                    <div className="text-xs text-indigo-400 mt-1">In-patient payments</div>
+                  </div>
+                  <div className="bg-red-50 rounded-xl p-4 text-center">
+                    <div className="text-xs text-red-500 font-medium uppercase tracking-wide mb-1">Total Expenses</div>
+                    <div className="text-xl font-bold text-red-600">{currency(expData.totalExpenses)}</div>
+                  </div>
+                  <div className={`rounded-xl p-4 text-center ${netProfit >= 0 ? 'bg-green-50' : 'bg-orange-50'}`}>
+                    <div className={`text-xs font-medium uppercase tracking-wide mb-1 ${netProfit >= 0 ? 'text-green-500' : 'text-orange-500'}`}>Net Profit</div>
+                    <div className={`text-xl font-bold ${netProfit >= 0 ? 'text-green-700' : 'text-orange-600'}`}>{currency(netProfit)}</div>
+                    <div className={`text-xs mt-1 ${netProfit >= 0 ? 'text-green-400' : 'text-orange-400'}`}>Combined: {currency(combinedRevenue)}</div>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
 
           {/* Revenue vs Expenses by Month */}
           {(monthWise.length > 0 || expData.monthWise.length > 0) && (() => {
@@ -729,9 +829,148 @@ export default function Analytics() {
 
       </>)}
 
+      {/* ── Revenue Overview tab ─────────────────────────────────────────────── */}
+      {tab === 'revenue' && (
+        <RevenueOverview revenueOverview={revenueOverview} />
+      )}
+
       {/* ── Patient Insights tab ────────────────────────────────────────────── */}
       {tab === 'patients' && (
         <PatientInsights ptData={ptData} />
+      )}
+
+    </div>
+  );
+}
+
+function RevenueOverview({ revenueOverview }) {
+  if (!revenueOverview) return <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>Loading revenue overview…</div>;
+
+  const cur = (val) => `Rs ${Number(val || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+  const bySource = revenueOverview.bySource || [];
+  const byDept   = revenueOverview.byDepartment || [];
+  const grand    = revenueOverview.grandTotal || 0;
+  const bk       = revenueOverview.breakdown || {};
+
+  const SOURCE_COLORS = ['#2563eb', '#0891b2', '#7c3aed', '#16a34a', '#d97706'];
+
+  const pieData = bySource.filter(s => s.amount > 0).map((s, i) => ({
+    name: s.source,
+    value: s.amount,
+    pct: s.pct,
+    color: SOURCE_COLORS[i % SOURCE_COLORS.length],
+  }));
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+      {/* Grand total + source summary cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
+        <div style={{ background: '#eff6ff', borderRadius: 12, padding: '16px 18px', border: '1px solid #bfdbfe', gridColumn: 'span 1' }}>
+          <div style={{ fontSize: 11, color: '#3b82f6', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Grand Total</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#1d4ed8', marginTop: 4 }}>{cur(grand)}</div>
+          <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>All revenue streams</div>
+        </div>
+        {[
+          { label: 'OPD',           value: bk.opdTotal,        color: '#2563eb', bg: '#eff6ff' },
+          { label: 'IPD',           value: bk.ipdRevenue,      color: '#7c3aed', bg: '#fdf4ff' },
+          { label: 'Pharmacy',      value: bk.pharmacyRevenue, color: '#16a34a', bg: '#f0fdf4' },
+          { label: 'Treat. Plans',  value: bk.treatmentRevenue,color: '#d97706', bg: '#fffbeb' },
+        ].map(({ label, value, color, bg }) => (
+          <div key={label} style={{ background: bg, borderRadius: 12, padding: '16px 18px', border: `1px solid ${color}40` }}>
+            <div style={{ fontSize: 11, color, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color, marginTop: 4 }}>{cur(value)}</div>
+            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 3 }}>
+              {grand > 0 ? `${((Number(value || 0) / grand) * 100).toFixed(1)}%` : '—'} of total
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Pie + Source table */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        {pieData.length > 0 && (
+          <div style={{ background: 'white', borderRadius: 12, border: '1px solid #e2e8f0', padding: 20 }}>
+            <div style={{ fontWeight: 600, marginBottom: 12, color: '#374151' }}>Revenue by Source</div>
+            <ResponsiveContainer width="100%" height={240}>
+              <PieChart>
+                <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={({ name, pct }) => `${pct}%`}>
+                  {pieData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                </Pie>
+                <Tooltip formatter={(val) => cur(val)} />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        <div style={{ background: 'white', borderRadius: 12, border: '1px solid #e2e8f0', padding: 20 }}>
+          <div style={{ fontWeight: 600, marginBottom: 12, color: '#374151' }}>Source Breakdown</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: '2px solid #f1f5f9' }}>
+                <th style={{ textAlign: 'left', padding: '6px 8px', color: '#6b7280', fontWeight: 600 }}>Source</th>
+                <th style={{ textAlign: 'right', padding: '6px 8px', color: '#6b7280', fontWeight: 600 }}>Amount</th>
+                <th style={{ textAlign: 'right', padding: '6px 8px', color: '#6b7280', fontWeight: 600 }}>Share</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bySource.map((s, i) => (
+                <tr key={s.source} style={{ borderBottom: '1px solid #f8fafc', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
+                  <td style={{ padding: '8px 8px', fontWeight: 500 }}>
+                    <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: SOURCE_COLORS[i % SOURCE_COLORS.length], marginRight: 6 }} />
+                    {s.source}
+                  </td>
+                  <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 700, color: '#374151' }}>{cur(s.amount)}</td>
+                  <td style={{ padding: '8px 8px', textAlign: 'right', color: '#6b7280' }}>{s.pct}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Department breakdown */}
+      {byDept.length > 0 && (
+        <div style={{ background: 'white', borderRadius: 12, border: '1px solid #e2e8f0', padding: 20 }}>
+          <div style={{ fontWeight: 600, marginBottom: 14, color: '#374151' }}>Revenue by Department</div>
+          <ResponsiveContainer width="100%" height={Math.max(200, byDept.length * 40)}>
+            <BarChart data={byDept} layout="vertical" margin={{ top: 4, right: 60, left: 120, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
+              <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={v => `Rs ${(v/1000).toFixed(0)}k`} />
+              <YAxis type="category" dataKey="deptName" tick={{ fontSize: 12 }} width={110} />
+              <Tooltip formatter={(val) => cur(val)} />
+              <Legend />
+              <Bar dataKey="opdRevenue" name="OPD" fill="#2563eb" stackId="a" radius={[0, 0, 0, 0]} />
+              <Bar dataKey="ipdRevenue" name="IPD" fill="#7c3aed" stackId="a" radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, marginTop: 16 }}>
+            <thead>
+              <tr style={{ borderBottom: '2px solid #f1f5f9', background: '#f8fafc' }}>
+                <th style={{ textAlign: 'left', padding: '8px 12px', color: '#6b7280', fontWeight: 600 }}>Department</th>
+                <th style={{ textAlign: 'right', padding: '8px 12px', color: '#6b7280', fontWeight: 600 }}>OPD Revenue</th>
+                <th style={{ textAlign: 'right', padding: '8px 12px', color: '#6b7280', fontWeight: 600 }}>IPD Revenue</th>
+                <th style={{ textAlign: 'right', padding: '8px 12px', color: '#6b7280', fontWeight: 600 }}>Total</th>
+                <th style={{ textAlign: 'right', padding: '8px 12px', color: '#6b7280', fontWeight: 600 }}>Share</th>
+              </tr>
+            </thead>
+            <tbody>
+              {byDept.map((d, i) => (
+                <tr key={d.deptId} style={{ borderBottom: '1px solid #f1f5f9', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
+                  <td style={{ padding: '8px 12px', fontWeight: 600, color: '#1e293b' }}>{d.deptName}</td>
+                  <td style={{ padding: '8px 12px', textAlign: 'right', color: '#2563eb' }}>{cur(d.opdRevenue)}</td>
+                  <td style={{ padding: '8px 12px', textAlign: 'right', color: '#7c3aed' }}>{cur(d.ipdRevenue)}</td>
+                  <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700 }}>{cur(d.total)}</td>
+                  <td style={{ padding: '8px 12px', textAlign: 'right', color: '#6b7280' }}>
+                    {grand > 0 ? `${((d.total / grand) * 100).toFixed(1)}%` : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
     </div>

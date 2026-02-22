@@ -80,8 +80,11 @@ exports.getPatientAssignments = async (req, res) => {
     const scope = await ensureScopedHospital(req, res);
     if (!scope.allowed) return;
 
-    const patient = await Patient.findByPk(req.params.patientId, { attributes: ['id', 'hospitalId'] });
+    const patient = await Patient.findByPk(req.params.patientId, { attributes: ['id', 'hospitalId', 'userId'] });
     if (!patient) return res.status(404).json({ message: 'Patient not found' });
+    if (req.user.role === 'patient' && patient.userId !== req.user.id) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
     if (!isSuperAdmin(req.user) && patient.hospitalId !== scope.hospitalId) {
       return res.status(403).json({ message: 'Access denied for this hospital patient' });
     }

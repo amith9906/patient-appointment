@@ -21,6 +21,7 @@ const Appointment = sequelize.define('Appointment', {
   symptoms: { type: DataTypes.TEXT },
   examinationFindings: { type: DataTypes.TEXT },
   diagnosis: { type: DataTypes.TEXT },
+  patientPackageId: { type: DataTypes.UUID, allowNull: true },
   treatmentDone: { type: DataTypes.TEXT },
   treatmentBill: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
   treatmentPlan: { type: DataTypes.TEXT },

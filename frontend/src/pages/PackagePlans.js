@@ -52,7 +52,7 @@ export default function PackagePlans() {
       const [planRes, anRes, patRes] = await Promise.all([
         packageAPI.getPlans(),
         packageAPI.getAnalytics(),
-        patientAPI.getAll(),
+          patientAPI.getAll({ paginate: 'false' }),
       ]);
       setPlans(planRes.data || []);
       setAnalytics(anRes.data || null);

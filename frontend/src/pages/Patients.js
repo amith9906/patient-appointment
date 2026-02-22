@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { patientAPI, hospitalAPI, bulkAPI } from '../services/api';
 import Modal from '../components/Modal';
 import Table from '../components/Table';
 import Badge from '../components/Badge';
 import SearchableSelect from '../components/SearchableSelect';
+import PaginationControls from '../components/PaginationControls';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
 
@@ -32,6 +33,9 @@ export default function Patients() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(INIT);
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(25);
+  const [patientPagination, setPatientPagination] = useState(null);
   const navigate = useNavigate();
 
   // Bulk upload state
@@ -43,13 +47,45 @@ export default function Patients() {
 
   const getDefaultHospitalId = () => hospitals?.[0]?.id || '';
 
-  const load = () => {
-    setLoading(true);
-    Promise.all([patientAPI.getAll(), hospitalAPI.getAll()])
-      .then(([p, h]) => { setPatients(p.data); setHospitals(h.data); })
-      .finally(() => setLoading(false));
-  };
-  useEffect(load, []);
+  const fetchHospitals = useCallback(() => {
+    hospitalAPI
+      .getAll()
+      .then((h) => setHospitals(h.data))
+      .catch(() => setHospitals([]));
+  }, []);
+
+  const fetchPatients = useCallback(
+    async (overrides = {}) => {
+      setLoading(true);
+      try {
+        const targetPage = overrides.page ?? page;
+        const targetPerPage = overrides.perPage ?? perPage;
+        const trimmedSearch = (overrides.search ?? search).trim();
+        const params = {
+          page: targetPage,
+          per_page: targetPerPage,
+        };
+        if (trimmedSearch) params.search = trimmedSearch;
+        const res = await patientAPI.getAll(params);
+        setPatients(res.data);
+        setPatientPagination(res.pagination || null);
+      } catch (err) {
+        toast.error(err?.response?.data?.message || 'Unable to load patients');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [page, perPage, search],
+  );
+
+  useEffect(() => {
+    fetchHospitals();
+  }, [fetchHospitals]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => fetchPatients(), 350);
+    return () => clearTimeout(timer);
+  }, [fetchPatients]);
 
   useEffect(() => {
     if (modal && !editing && !form.hospitalId && hospitals.length > 0) {
@@ -73,7 +109,9 @@ export default function Patients() {
     try {
       if (editing) { await patientAPI.update(editing.id, form); toast.success('Patient updated'); }
       else { await patientAPI.create(form); toast.success('Patient registered'); }
-      setModal(false); load();
+      setModal(false);
+      setPage(1);
+      await fetchPatients({ page: 1 });
     } catch (err) { toast.error(err.response.data.message || 'Error'); }
   };
 
@@ -96,7 +134,10 @@ export default function Patients() {
       fd.append('hospitalId', bulkHospitalId);
       const res = await bulkAPI.uploadPatients(fd);
       setBulkResult(res.data);
-      if (res.data.created > 0) load();
+      if (res.data.created > 0) {
+        setPage(1);
+        await fetchPatients({ page: 1 });
+      }
     } catch (err) {
       toast.error(err.response.data.message || 'Upload failed');
     } finally {
@@ -111,6 +152,10 @@ export default function Patients() {
   };
 
   const set = (k, v) => setForm({ ...form, [k]: v });
+  const handleSearchChange = (value) => {
+    setSearch(value);
+    setPage(1);
+  };
   const toggleListValue = (key, value) => {
     setForm((prev) => {
       const list = Array.isArray(prev[key]) ? prev[key] : [];
@@ -118,8 +163,6 @@ export default function Patients() {
       return { ...prev, [key]: next };
     });
   };
-  const filtered = patients.filter(p => !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.patientId.includes(search) || p.phone.includes(search));
-
   const columns = [
     { key: 'patientId', label: 'ID', render: (v) => <span style={{ fontFamily: 'monospace', background: '#f1f5f9', padding: '2px 6px', borderRadius: 4, fontSize: 12 }}>{v}</span> },
     { key: 'name', label: 'Name', render: (v, r) => <div style={{ fontWeight: 600, cursor: 'pointer', color: '#2563eb' }} onClick={() => navigate(`/patients/${r.id}`)}>{v}</div> },
@@ -140,16 +183,26 @@ export default function Patients() {
   return (
     <div>
       <div className={styles.pageHeader}>
-        <div><h2 className={styles.pageTitle}>Patients</h2><p className={styles.pageSubtitle}>{patients.length} patients registered</p></div>
+        <div><h2 className={styles.pageTitle}>Patients</h2><p className={styles.pageSubtitle}>{patientPagination?.total ?? patients.length} patients registered</p></div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className={styles.btnSecondary} onClick={openBulkModal}>⬆ Bulk Upload</button>
           <button className={styles.btnPrimary} onClick={openCreate}>+ Register Patient</button>
         </div>
       </div>
       <div className={styles.filterBar}>
-        <input className={styles.searchInput} placeholder="Search by name, ID, or phone..." value={search} onChange={(e) => setSearch(e.target.value)} />
+        <input className={styles.searchInput} placeholder="Search by name, ID, or phone..." value={search} onChange={(e) => handleSearchChange(e.target.value)} />
       </div>
-      <div className={styles.card}><Table columns={columns} data={filtered} loading={loading} /></div>
+      <div className={styles.card}>
+        <Table columns={columns} data={patients} loading={loading} />
+        <PaginationControls
+          meta={patientPagination}
+          onPageChange={(nextPage) => setPage(nextPage)}
+          onPerPageChange={(value) => {
+            setPerPage(value);
+            setPage(1);
+          }}
+        />
+      </div>
 
       {/* Add / Edit Modal */}
       <Modal isOpen={modal} onClose={() => setModal(false)} title={editing ? 'Edit Patient' : 'Register Patient'} size="xl">

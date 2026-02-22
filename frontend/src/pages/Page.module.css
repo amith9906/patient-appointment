@@ -22,7 +22,20 @@
 .btnDelete { background: #fee2e2; color: #b91c1c; border: none; padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; }
 .btnSuccess { background: #dcfce7; color: #15803d; border: none; padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; }
 .btnWarning { background: #fef9c3; color: #854d0e; border: none; padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; }
-.actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  min-width: max-content;
+}
+.actions button {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  font-size: 11px;
+  line-height: 1.2;
+}
 
 /* Form styles */
 .form { display: flex; flex-direction: column; gap: 0; }
@@ -39,6 +52,11 @@
 .input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
 
 .formActions { display: flex; justify-content: flex-end; gap: 10px; padding-top: 8px; border-top: 1px solid #f1f5f9; margin-top: 8px; }
+.strip { margin-top: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.stripItem { background: #fff; border-radius: 10px; border: 1px solid #e2e8f0; padding: 14px 16px; }
+.stripLabel { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; margin-bottom: 6px; }
+.stripValue { font-size: 20px; font-weight: 700; color: #1e293b; }
+.stripNote { font-size: 11px; color: #94a3b8; margin-top: 4px; }
 
 /* Info display */
 .infoGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
@@ -66,7 +84,7 @@
   .formActions { flex-direction: column-reverse; gap: 8px; }
   .formActions button { width: 100%; }
   .actions { gap: 4px; }
-  .actions button { padding: 5px 10px; font-size: 11px; }
+  .actions button { padding: 5px 9px; font-size: 11px; }
   .infoGrid { grid-template-columns: 1fr; gap: 10px; }
   .card { border-radius: 10px; }
 }

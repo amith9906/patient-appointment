@@ -1,10 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { ResponsiveContainer, CartesianGrid, Tooltip, XAxis, YAxis, Legend, LineChart, Line } from 'recharts';
 import { hospitalAPI, medicationAPI, pdfAPI, stockPurchaseAPI, vendorAPI } from '../services/api';
+import { exportToCSV } from '../utils/exportCsv';
 import { toast } from 'react-toastify';
 import Table from '../components/Table';
 import Modal from '../components/Modal';
 import SearchableSelect from '../components/SearchableSelect';
+import PaginationControls from '../components/PaginationControls';
 import styles from './Page.module.css';
 
 const INIT_PURCHASE = {
@@ -60,31 +62,57 @@ export default function StockManagement() {
   const [ledgerData, setLedgerData] = useState([]);
   const [stockAnalytics, setStockAnalytics] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [medPage, setMedPage] = useState(1);
+  const [medPerPage, setMedPerPage] = useState(25);
+  const [medPagination, setMedPagination] = useState(null);
+  const [purchasePage, setPurchasePage] = useState(1);
+  const [purchasePerPage, setPurchasePerPage] = useState(25);
+  const [purchasePagination, setPurchasePagination] = useState(null);
   const userRole = (() => {
     try { return JSON.parse(localStorage.getItem('user') || '{}').role || ''; } catch { return ''; }
   })();
   const isSuperAdmin = userRole === 'super_admin';
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
-      const tasks = [medicationAPI.getAll(), vendorAPI.getAll({ isActive: true }), stockPurchaseAPI.getAll()];
+      const tasks = [
+        medicationAPI.getAll({ page: medPage, per_page: medPerPage }),
+        vendorAPI.getAll({ isActive: true }),
+        stockPurchaseAPI.getAll({ page: purchasePage, per_page: purchasePerPage }),
+      ];
       if (isSuperAdmin) tasks.push(hospitalAPI.getAll());
       const [medRes, venRes, purRes, hospRes] = await Promise.all(tasks);
       setMedications(medRes.data || []);
+      setMedPagination(medRes.pagination || null);
       setVendors(venRes.data || []);
       setPurchases(purRes.data || []);
-      if (isSuperAdmin) setHospitals(hospRes.data || []);
+      setPurchasePagination(purRes.pagination || null);
+      if (isSuperAdmin && hospRes) setHospitals(hospRes.data || []);
     } catch {
       toast.error('Failed to load stock data');
     } finally {
       setLoading(false);
     }
-  };
+  }, [isSuperAdmin, medPage, medPerPage, purchasePage, purchasePerPage]);
 
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
+
+  // Expiry alerts
+  const [expiryAlerts, setExpiryAlerts] = useState([]);
+  const [expiryDays, setExpiryDays] = useState(30);
+  const [expiryLoading, setExpiryLoading] = useState(false);
+
+  useEffect(() => {
+    if (tab !== 'stock') return;
+    setExpiryLoading(true);
+    medicationAPI.getExpiryAlerts({ days: expiryDays })
+      .then((res) => setExpiryAlerts(res.data || []))
+      .catch(() => {})
+      .finally(() => setExpiryLoading(false));
+  }, [tab, expiryDays]);
 
   useEffect(() => {
     if (tab !== 'analytics') return;
@@ -323,6 +351,52 @@ export default function StockManagement() {
 
   const lowStock = medications.filter((m) => Number(m.stockQuantity || 0) < 10);
   const totalValue = medications.reduce((s, m) => s + (Number(m.stockQuantity || 0) * Number(m.unitPrice || 0)), 0);
+  const inventoryTotal = medPagination?.total ?? medications.length;
+  const purchaseTotal = purchasePagination?.total ?? purchases.length;
+
+  const handleExportStock = async () => {
+    try {
+      const res = await medicationAPI.getAll({ paginate: 'false' });
+      const rows = res.data || [];
+      exportToCSV(rows, [
+        { label: 'Name', key: 'name' },
+        { label: 'Generic Name', key: 'genericName' },
+        { label: 'Category', key: 'category' },
+        { label: 'Dosage', key: 'dosage' },
+        { label: 'Stock Qty', key: 'stockQuantity' },
+        { label: 'Unit Price (Rs)', key: 'unitPrice' },
+        { label: 'Purchase Price (Rs)', key: 'purchasePrice' },
+        { label: 'Stock Value (Rs)', key: (r) => (Number(r.stockQuantity || 0) * Number(r.unitPrice || 0)).toFixed(2) },
+        { label: 'GST %', key: 'gstRate' },
+        { label: 'HSN Code', key: 'hsnCode' },
+        { label: 'Expiry Date', key: 'expiryDate' },
+        { label: 'Requires Prescription', key: (r) => r.requiresPrescription ? 'Yes' : 'No' },
+      ], 'stock_inventory');
+    } catch { toast.error('Export failed'); }
+  };
+
+  const handleExportPurchases = async () => {
+    try {
+      const res = await stockPurchaseAPI.getAll({ paginate: 'false' });
+      const rows = res.data || [];
+      exportToCSV(rows, [
+        { label: 'Invoice #', key: 'invoiceNumber' },
+        { label: 'Date', key: 'purchaseDate' },
+        { label: 'Medication', key: (r) => r.medication?.name || '' },
+        { label: 'Vendor', key: (r) => r.vendor?.name || '' },
+        { label: 'Batch #', key: 'batchNo' },
+        { label: 'Mfg Date', key: 'mfgDate' },
+        { label: 'Expiry Date', key: 'expiryDate' },
+        { label: 'Qty', key: 'quantity' },
+        { label: 'Unit Cost (Rs)', key: 'unitCost' },
+        { label: 'Discount %', key: 'discountPct' },
+        { label: 'GST %', key: 'taxPct' },
+        { label: 'Input GST (Rs)', key: 'taxAmount' },
+        { label: 'Total (Rs)', key: 'totalAmount' },
+        { label: 'Notes', key: 'notes' },
+      ], 'stock_purchases');
+    } catch { toast.error('Export failed'); }
+  };
 
   const stockCols = [
     {
@@ -393,10 +467,10 @@ export default function StockManagement() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12, marginBottom: 20 }}>
         {[
-          { label: 'Total Items', value: medications.length, color: '#2563eb' },
+          { label: 'Total Items', value: inventoryTotal, color: '#2563eb' },
           { label: 'Low Stock Items', value: lowStock.length, color: '#dc2626' },
           { label: 'Total Stock Value', value: currency(totalValue), color: '#16a34a' },
-          { label: 'Total Purchases', value: purchases.length, color: '#7c3aed' },
+          { label: 'Total Purchases', value: purchaseTotal, color: '#7c3aed' },
         ].map((s) => (
           <div key={s.label} style={{ background: '#fff', border: `2px solid ${s.color}20`, borderRadius: 12, padding: 16, borderTop: `3px solid ${s.color}` }}>
             <div style={{ fontSize: 22, fontWeight: 700, color: '#1e293b' }}>{s.value}</div>
@@ -411,7 +485,7 @@ export default function StockManagement() {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' }}>
         {['stock', 'purchases', 'analytics'].map((t) => (
           <button
             key={t}
@@ -430,10 +504,78 @@ export default function StockManagement() {
             {t === 'stock' ? 'Current Stock' : t === 'purchases' ? 'Purchase History' : 'Advanced Analytics'}
           </button>
         ))}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          {tab === 'stock' && (
+            <button className={styles.btnSecondary} onClick={handleExportStock} title="Export stock inventory to CSV">Export CSV</button>
+          )}
+          {tab === 'purchases' && (
+            <button className={styles.btnSecondary} onClick={handleExportPurchases} title="Export purchase history to CSV">Export CSV</button>
+          )}
+        </div>
       </div>
 
-      {tab === 'stock' && <div className={styles.card}><Table columns={stockCols} data={medications} loading={loading} /></div>}
-      {tab === 'purchases' && <div className={styles.card}><Table columns={purchaseCols} data={purchases} loading={loading} emptyMessage="No purchases recorded yet" /></div>}
+      {tab === 'stock' && expiryAlerts.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+            <span style={{ fontWeight: 700, fontSize: 14, color: '#dc2626' }}>
+              Expiry Alerts ({expiryAlerts.length} medicine{expiryAlerts.length !== 1 ? 's' : ''})
+            </span>
+            <select
+              value={expiryDays}
+              onChange={(e) => setExpiryDays(Number(e.target.value))}
+              style={{ fontSize: 12, padding: '3px 8px', borderRadius: 6, border: '1px solid #e2e8f0' }}
+            >
+              <option value={7}>Expiring in 7 days</option>
+              <option value={30}>Expiring in 30 days</option>
+              <option value={90}>Expiring in 90 days</option>
+              <option value={-1}>Already Expired</option>
+            </select>
+            {expiryLoading && <span style={{ fontSize: 12, color: '#94a3b8' }}>Loading...</span>}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 8 }}>
+            {expiryAlerts.map((m) => {
+              const isExpired = m.daysRemaining < 0;
+              const isUrgent = m.daysRemaining >= 0 && m.daysRemaining < 7;
+              const bg = isExpired ? '#fef2f2' : isUrgent ? '#fff7ed' : '#fffbeb';
+              const border = isExpired ? '#fecaca' : isUrgent ? '#fed7aa' : '#fde68a';
+              const color = isExpired ? '#dc2626' : isUrgent ? '#c2410c' : '#b45309';
+              return (
+                <div key={m.id} style={{ background: bg, border: `1px solid ${border}`, borderRadius: 8, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: '#1e293b' }}>{m.name}</div>
+                    <div style={{ fontSize: 11, color: '#64748b' }}>{m.category} · Stock: {m.stockQuantity}</div>
+                    <div style={{ fontSize: 11, color: '#64748b' }}>Expiry: {m.expiryDate || 'N/A'}</div>
+                  </div>
+                  <span style={{ fontWeight: 700, fontSize: 13, color, flexShrink: 0, marginLeft: 8 }}>
+                    {isExpired ? 'EXPIRED' : m.daysRemaining === 0 ? 'Today' : `${m.daysRemaining}d`}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {tab === 'stock' && (
+        <div className={styles.card}>
+          <Table columns={stockCols} data={medications} loading={loading} />
+          <PaginationControls
+            meta={medPagination}
+            onPageChange={(next) => setMedPage(next)}
+            onPerPageChange={(value) => { setMedPerPage(value); setMedPage(1); }}
+          />
+        </div>
+      )}
+      {tab === 'purchases' && (
+        <div className={styles.card}>
+          <Table columns={purchaseCols} data={purchases} loading={loading} emptyMessage="No purchases recorded yet" />
+          <PaginationControls
+            meta={purchasePagination}
+            onPageChange={(next) => setPurchasePage(next)}
+            onPerPageChange={(value) => { setPurchasePerPage(value); setPurchasePage(1); }}
+          />
+        </div>
+      )}
       {tab === 'analytics' && (
         <div className={styles.card} style={{ padding: 14 }}>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>

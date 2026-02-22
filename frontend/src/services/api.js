@@ -13,6 +13,14 @@ api.interceptors.request.use((config) => {
 // Redirect to login on 401
 api.interceptors.response.use(
   (res) => {
+    if (
+      res.data &&
+      Object.prototype.hasOwnProperty.call(res.data, 'data') &&
+      Object.prototype.hasOwnProperty.call(res.data, 'meta')
+    ) {
+      res.pagination = res.data.meta;
+      res.data = res.data.data;
+    }
     return res;
   },
   (err) => {
@@ -58,6 +66,10 @@ export const doctorAPI = {
   getAll: (params) => api.get('/doctors', { params }),
   getOne: (id) => api.get(`/doctors/${id}`),
   getSlots: (id, date) => api.get(`/doctors/${id}/slots`, { params: { date } }),
+  getAvailability: (id, params) => api.get(`/doctors/${id}/availability`, { params }),
+  saveAvailability: (id, payload) => api.post(`/doctors/${id}/availability`, payload),
+  getAvailabilitySummary: (params) => api.get('/doctors/availability/summary', { params }),
+  getAvailableOnDate: (date) => api.get('/doctors/available-on', { params: { date } }),
   create: (data) => api.post('/doctors', data),
   update: (id, data) => api.put(`/doctors/${id}`, data),
   delete: (id) => api.delete(`/doctors/${id}`),
@@ -94,6 +106,7 @@ export const appointmentAPI = {
   getDashboard: () => api.get('/appointments/dashboard'),
   getAnalytics: (params) => api.get('/appointments/analytics', { params }),
   getPatientAnalytics: (params) => api.get('/appointments/patient-analytics', { params }),
+  getRevenueOverview: (params) => api.get('/appointments/revenue-overview', { params }),
   create: (data) => api.post('/appointments', data),
   update: (id, data) => api.put(`/appointments/${id}`, data),
   updateClaim: (id, data) => api.patch(`/appointments/${id}/claim`, data),
@@ -187,6 +200,15 @@ export const labAPI = {
   deleteTest: (id) => api.delete(`/labs/tests/${id}`),
 };
 
+// Lab Report Templates
+export const labReportTemplateAPI = {
+  getAll: (params) => api.get('/lab-report-templates', { params }),
+  getOne: (id) => api.get(`/lab-report-templates/${id}`),
+  create: (data) => api.post('/lab-report-templates', data),
+  update: (id, data) => api.put(`/lab-report-templates/${id}`, data),
+  delete: (id) => api.delete(`/lab-report-templates/${id}`),
+};
+
 // Users (admin)
 export const userAPI = {
   getAll: (params) => api.get('/users', { params }),
@@ -220,6 +242,7 @@ export const pdfAPI = {
   medicineInvoice: (invoiceId) => api.get(`/pdf/medicine-invoice/${invoiceId}`, { responseType: 'blob' }),
   medicineReturn: (returnId) => api.get(`/pdf/medicine-return/${returnId}`, { responseType: 'blob' }),
   purchaseReturn: (returnId) => api.get(`/pdf/purchase-return/${returnId}`, { responseType: 'blob' }),
+  dischargeSummary: (appointmentId, params) => api.get(`/pdf/discharge/${appointmentId}`, { responseType: 'blob', params }),
 };
 
 // Vitals
@@ -264,6 +287,61 @@ export const reportAPI = {
   download: (id) =>
     api.get(`/reports/${id}/download`, { responseType: 'blob' }),
   delete: (id) => api.delete(`/reports/${id}`),
+};
+
+// OT Management
+export const otAPI = {
+  getStats: (params) => api.get('/ot/stats', { params }),
+  getAll: (params) => api.get('/ot', { params }),
+  getOne: (id) => api.get(`/ot/${id}`),
+  create: (data) => api.post('/ot', data),
+  update: (id, data) => api.put(`/ot/${id}`, data),
+  cancel: (id) => api.patch(`/ot/${id}/cancel`),
+};
+
+// IPD Management
+export const ipdAPI = {
+  getStats: (params) => api.get('/ipd/stats', { params }),
+  getRooms: (params) => api.get('/ipd/rooms', { params }),
+  createRoom: (data) => api.post('/ipd/rooms', data),
+  updateRoom: (id, data) => api.put(`/ipd/rooms/${id}`, data),
+  deleteRoom: (id) => api.delete(`/ipd/rooms/${id}`),
+  getAdmissions: (params) => api.get('/ipd', { params }),
+  getAdmission: (id) => api.get(`/ipd/${id}`),
+  admit: (data) => api.post('/ipd', data),
+  update: (id, data) => api.put(`/ipd/${id}`, data),
+  discharge: (id, data) => api.patch(`/ipd/${id}/discharge`, data),
+  addNote: (id, data) => api.post(`/ipd/${id}/notes`, data),
+  // Billing
+  getBill: (id) => api.get(`/ipd/${id}/bill`),
+  addBillItem: (id, data) => api.post(`/ipd/${id}/bill/items`, data),
+  updateBillItem: (id, itemId, data) => api.put(`/ipd/${id}/bill/items/${itemId}`, data),
+  deleteBillItem: (id, itemId) => api.delete(`/ipd/${id}/bill/items/${itemId}`),
+  addPayment: (id, data) => api.post(`/ipd/${id}/bill/payments`, data),
+  deletePayment: (id, paymentId) => api.delete(`/ipd/${id}/bill/payments/${paymentId}`),
+  updateDiscount: (id, data) => api.patch(`/ipd/${id}/bill/discount`, data),
+};
+
+// Treatment Plans
+export const treatmentPlanAPI = {
+  getAll: (params) => api.get('/treatment-plans', { params }),
+  getOne: (id) => api.get(`/treatment-plans/${id}`),
+  create: (data) => api.post('/treatment-plans', data),
+  update: (id, data) => api.put(`/treatment-plans/${id}`, data),
+  delete: (id) => api.delete(`/treatment-plans/${id}`),
+};
+
+// Doctor Leaves
+export const doctorLeaveAPI = {
+  getAll: (params) => api.get('/doctor-leaves', { params }),
+  checkLeave: (doctorId, date) => api.get('/doctor-leaves/check', { params: { doctorId, date } }),
+  create: (data) => api.post('/doctor-leaves', data),
+  delete: (id) => api.delete(`/doctor-leaves/${id}`),
+};
+
+// Global Search
+export const searchAPI = {
+  global: (q) => api.get('/search', { params: { q } }),
 };
 
 export default api;

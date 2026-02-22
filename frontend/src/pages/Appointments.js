@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { appointmentAPI, doctorAPI, packageAPI, patientAPI } from '../services/api';
+import { appointmentAPI, doctorAPI, packageAPI, patientAPI, doctorLeaveAPI } from '../services/api';
+import { exportToCSV } from '../utils/exportCsv';
 import Modal from '../components/Modal';
 import Table from '../components/Table';
 import Badge from '../components/Badge';
@@ -9,10 +10,11 @@ import SearchableSelect from '../components/SearchableSelect';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
 import { startOfWeek, endOfWeek, format } from 'date-fns';
+import PaginationControls from '../components/PaginationControls';
 
 const INIT = {
   patientId: '', doctorId: '', appointmentDate: '', appointmentTime: '', type: 'consultation',
-  reason: '', notes: '', fee: '', referralSource: '', referralDetail: '',
+  reason: '', notes: '', fee: '', referralSource: '', referralDetail: '', patientPackageId: '',
 };
 const STATUSES = ['scheduled', 'postponed', 'confirmed', 'in_progress', 'completed', 'cancelled', 'no_show'];
 const LS_SMART   = 'appt_smart_defaults';
@@ -37,7 +39,13 @@ export default function Appointments() {
   const [appointments, setAppointments] = useState([]);
   const [doctors, setDoctors]           = useState([]);
   const [patients, setPatients]         = useState([]);
+  const [patientPackages, setPatientPackages] = useState([]);
+  const [packagesLoading, setPackagesLoading] = useState(false);
   const [slots, setSlots]               = useState([]);
+  const [leaveWarning, setLeaveWarning] = useState(null);
+  const [availableDoctorIds, setAvailableDoctorIds] = useState(null); // null = not checked yet
+  const [selectedIds, setSelectedIds]   = useState(new Set());
+  const [bulkLoading, setBulkLoading]   = useState(false);
   const [loading, setLoading]           = useState(true);
   const [modal, setModal]               = useState(false);
   const [detailModal, setDetailModal]   = useState(null);
@@ -45,6 +53,9 @@ export default function Appointments() {
   const [editing, setEditing]           = useState(null);
   const [form, setForm]                 = useState(INIT);
   const [filters, setFilters]           = useState({ status: '', date: '', patientName: '', patientPhone: '' });
+  const [page, setPage]                 = useState(1);
+  const [perPage, setPerPage]           = useState(25);
+  const [pagination, setPagination]     = useState(null);
   const [actionNotes, setActionNotes]   = useState('');
   const [postponeDate, setPostponeDate] = useState('');
   const [postponeTime, setPostponeTime] = useState('');
@@ -81,18 +92,42 @@ export default function Appointments() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true);
-    const params = {};
+    const params = {
+      page,
+      per_page: perPage,
+    };
     if (filters.status) params.status = filters.status;
-    if (filters.date)   params.date   = filters.date;
-    if (filters.patientName.trim())  params.patientName = filters.patientName.trim();
+    if (filters.date) params.date = filters.date;
+    if (filters.patientName.trim()) params.patientName = filters.patientName.trim();
     if (filters.patientPhone.trim()) params.patientPhone = filters.patientPhone.trim();
-    Promise.all([appointmentAPI.getAll(params), doctorAPI.getAll(), patientAPI.getAll()])
-      .then(([a, d, p]) => { setAppointments(a.data); setDoctors(d.data); setPatients(p.data); })
+    Promise.all([
+      appointmentAPI.getAll(params),
+      doctorAPI.getAll(),
+      patientAPI.getAll({ paginate: 'false' }),
+    ])
+      .then(([a, d, p]) => {
+        setAppointments(a.data);
+        setPagination(a.pagination || null);
+        setDoctors(d.data);
+        setPatients(p.data);
+      })
       .finally(() => setLoading(false));
-  };
-  useEffect(load, [filters]);
+  }, [filters.status, filters.date, filters.patientName, filters.patientPhone, page, perPage]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filters.status, filters.date, filters.patientName, filters.patientPhone]);
+
+  useEffect(() => {
+    if (form.patientId) loadPatientAssignments(form.patientId);
+    else setPatientPackages([]);
+  }, [form.patientId]);
 
   // Calendar appointments
   useEffect(() => {
@@ -148,20 +183,51 @@ export default function Appointments() {
     }
     setForm(updated);
     if (k === 'doctorId' || k === 'appointmentDate') loadSlots(updated.doctorId, updated.appointmentDate);
+    if (k === 'appointmentDate' && v) loadAvailableDoctors(v);
+  };
+
+  const loadAvailableDoctors = async (date) => {
+    if (!date) { setAvailableDoctorIds(null); return; }
+    try {
+      const res = await doctorAPI.getAvailableOnDate(date);
+      setAvailableDoctorIds(new Set(res.data.availableDoctorIds));
+    } catch { setAvailableDoctorIds(null); }
   };
 
   const loadSlots = async (doctorId, date) => {
     if (!doctorId || !date) return;
     try { const res = await doctorAPI.getSlots(doctorId, date); setSlots(res.data); }
     catch { setSlots([]); }
+    // Check leave
+    try {
+      const lr = await doctorLeaveAPI.checkLeave(doctorId, date);
+      setLeaveWarning(lr.data?.onLeave ? lr.data.leave : null);
+    } catch { setLeaveWarning(null); }
+  };
+
+  const loadPatientAssignments = async (patientId) => {
+    if (!patientId) {
+      setPatientPackages([]);
+      return;
+    }
+    setPackagesLoading(true);
+    try {
+      const res = await packageAPI.getPatientAssignments(patientId, { status: 'active' });
+      setPatientPackages(res.data || []);
+    } catch {
+      setPatientPackages([]);
+    } finally {
+      setPackagesLoading(false);
+    }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      if (editing) { await appointmentAPI.update(editing.id, form); toast.success('Appointment updated'); }
+      const payload = { ...form };
+      if (editing) { await appointmentAPI.update(editing.id, payload); toast.success('Appointment updated'); }
       else {
-        await appointmentAPI.create(form);
+        await appointmentAPI.create(payload);
         toast.success('Appointment scheduled');
         if (form.doctorId) localStorage.setItem(LS_PREF_DR, form.doctorId);
       }
@@ -174,13 +240,58 @@ export default function Appointments() {
           });
         } catch {}
       }
-      setModal(false); load(); refreshCalendar();
+      setModal(false);
+      load();
+      refreshCalendar();
+      loadPatientAssignments(form.patientId);
     } catch (err) { toast.error(err.response.data.message || 'Error'); }
   };
 
   const handleStatus = async (id, status) => {
     try { await appointmentAPI.update(id, { status }); toast.success(`Status updated to ${status}`); load(); }
     catch { toast.error('Error'); }
+  };
+
+  const toggleSelect = (id) => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
+  const toggleSelectAll = () => {
+    const selectable = appointments.filter((a) => !['cancelled', 'no_show', 'completed'].includes(a.status));
+    if (selectable.every((a) => selectedIds.has(a.id))) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(selectable.map((a) => a.id)));
+    }
+  };
+
+  const handleBulkComplete = async () => {
+    if (selectedIds.size === 0) return;
+    setBulkLoading(true);
+    let done = 0;
+    for (const id of selectedIds) {
+      try { await appointmentAPI.update(id, { status: 'completed' }); done++; } catch {}
+    }
+    setBulkLoading(false);
+    setSelectedIds(new Set());
+    toast.success(`${done} appointment${done !== 1 ? 's' : ''} marked as completed`);
+    load();
+  };
+
+  const handleBulkCancel = async () => {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`Cancel ${selectedIds.size} appointment(s)?`)) return;
+    setBulkLoading(true);
+    let done = 0;
+    for (const id of selectedIds) {
+      try { await appointmentAPI.update(id, { status: 'cancelled' }); done++; } catch {}
+    }
+    setBulkLoading(false);
+    setSelectedIds(new Set());
+    toast.success(`${done} appointment${done !== 1 ? 's' : ''} cancelled`);
+    load();
   };
 
   const handleCheckIn = async (appt) => {
@@ -289,6 +400,8 @@ export default function Appointments() {
 
   // -- Patient typeahead --------------------------------------------------------
   const selectedPatient = patients.find(p => p.id === form.patientId);
+  const activePackages = patientPackages || [];
+  const selectedPackage = activePackages.find((pkg) => pkg.id === form.patientPackageId);
 
   const typeaheadPatients = (() => {
     const q = patientQuery.trim().toLowerCase();
@@ -305,6 +418,7 @@ export default function Appointments() {
       patientId: p.id,
       referralSource: p.referralSource || f.referralSource || '',
       referralDetail: p.referralDetail || f.referralDetail || '',
+      patientPackageId: '',
     }));
     setPatientQuery('');
     setPatientDropOpen(false);
@@ -354,8 +468,61 @@ export default function Appointments() {
     } finally { setQuickSaving(false); }
   };
 
+  // -- CSV Export ---------------------------------------------------------------
+  const [exporting, setExporting] = useState(false);
+  const handleExportCSV = async () => {
+    setExporting(true);
+    try {
+      const params = { paginate: 'false' };
+      if (filters.status) params.status = filters.status;
+      if (filters.date) params.date = filters.date;
+      if (filters.patientName.trim()) params.patientName = filters.patientName.trim();
+      if (filters.patientPhone.trim()) params.patientPhone = filters.patientPhone.trim();
+      const res = await appointmentAPI.getAll(params);
+      const rows = res.data || [];
+      const csvCols = [
+        { label: 'Apt #', key: (r) => r.appointmentNumber || '' },
+        { label: 'Date', key: (r) => r.appointmentDate || '' },
+        { label: 'Time', key: (r) => (r.appointmentTime || '').slice(0, 5) },
+        { label: 'Patient', key: (r) => r.patient?.name || '' },
+        { label: 'Patient ID', key: (r) => r.patient?.patientId || '' },
+        { label: 'Phone', key: (r) => r.patient?.phone || '' },
+        { label: 'Doctor', key: (r) => r.doctor ? `Dr. ${r.doctor.name}` : '' },
+        { label: 'Type', key: (r) => r.type || '' },
+        { label: 'Status', key: (r) => STATUS_LABEL[r.status] || r.status || '' },
+        { label: 'Fee (Rs)', key: (r) => r.fee || 0 },
+        { label: 'Billing Type', key: (r) => r.billingType || '' },
+        { label: 'Paid', key: (r) => r.isPaid ? 'Yes' : 'No' },
+        { label: 'Package', key: (r) => r.packageAssignment?.plan?.name || '' },
+        { label: 'Reason', key: (r) => r.reason || '' },
+        { label: 'Notes', key: (r) => r.notes || '' },
+      ];
+      exportToCSV(rows, csvCols, 'appointments');
+    } catch {
+      toast.error('Export failed');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // -- Table columns ------------------------------------------------------------
+  const selectableAppointments = appointments.filter((a) => !['cancelled', 'no_show', 'completed'].includes(a.status));
+  const allSelected = selectableAppointments.length > 0 && selectableAppointments.every((a) => selectedIds.has(a.id));
+
   const columns = [
+    {
+      key: 'id',
+      label: (
+        <input type="checkbox" checked={allSelected} onChange={toggleSelectAll}
+          title="Select all selectable" style={{ cursor: 'pointer' }} />
+      ),
+      render: (_, r) => {
+        const isSelectable = !['cancelled', 'no_show', 'completed'].includes(r.status);
+        return isSelectable
+          ? <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelect(r.id)} style={{ cursor: 'pointer' }} />
+          : null;
+      },
+    },
     { key: 'appointmentNumber', label: 'Apt #', render: (v) => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{v}</span> },
     { key: 'appointmentDate',   label: 'Date' },
     { key: 'appointmentTime',   label: 'Time', render: (v) => v.slice(0, 5) },
@@ -382,6 +549,7 @@ export default function Appointments() {
     },
     { key: 'doctor',  label: 'Doctor',  render: (v) => v ? `Dr. ${v.name}` : '-'},
     { key: 'type',    label: 'Type',    render: (v) => <Badge text={v} type="default" /> },
+    { key: 'packageAssignment', label: 'Package', render: (v) => v?.plan?.name ? `${v.plan.name} (${v.status || 'active'})` : '-' },
     { key: 'status',  label: 'Status',  render: (v) => <Badge text={STATUS_LABEL[v] || v} type={v} /> },
     { key: 'isPaid',  label: 'Payment', render: (v) => <Badge text={v ? 'Paid' : 'Unpaid'} type={v ? 'active' : 'inactive'} /> },
     { key: 'id', label: 'Actions', render: (_, r) => (
@@ -478,8 +646,35 @@ export default function Appointments() {
               Today Queue
             </button>
             <button className={styles.btnSecondary} onClick={() => setFilters({ status: '', date: '', patientName: '', patientPhone: '' })}>Clear</button>
+            <button className={styles.btnSecondary} onClick={handleExportCSV} disabled={exporting} title="Export filtered appointments to CSV">
+              {exporting ? 'Exporting...' : 'Export CSV'}
+            </button>
           </div>
-          <div className={styles.card}><Table columns={columns} data={appointments} loading={loading} /></div>
+          {selectedIds.size > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, marginBottom: 10 }}>
+              <span style={{ fontWeight: 600, fontSize: 13, color: '#1e40af' }}>{selectedIds.size} selected</span>
+              <button className={styles.btnSuccess} onClick={handleBulkComplete} disabled={bulkLoading} style={{ fontSize: 12, padding: '5px 14px' }}>
+                {bulkLoading ? 'Processing...' : 'Mark All Completed'}
+              </button>
+              <button className={styles.btnWarning} onClick={handleBulkCancel} disabled={bulkLoading} style={{ fontSize: 12, padding: '5px 14px' }}>
+                Cancel All
+              </button>
+              <button className={styles.btnSecondary} onClick={() => setSelectedIds(new Set())} style={{ fontSize: 12, padding: '5px 14px' }}>
+                Clear Selection
+              </button>
+            </div>
+          )}
+          <div className={styles.card}>
+            <Table columns={columns} data={appointments} loading={loading} />
+            <PaginationControls
+              meta={pagination}
+              onPageChange={(nextPage) => setPage(nextPage)}
+              onPerPageChange={(value) => {
+                setPerPage(value);
+                setPage(1);
+              }}
+            />
+          </div>
         </>
       )}
 
@@ -599,6 +794,33 @@ export default function Appointments() {
             )}
           </div>
 
+          {activePackages.length > 0 && (
+            <div className={styles.field} style={{ marginBottom: 14 }}>
+              <label className={styles.label}>Use Package (optional)</label>
+              <select
+                className={styles.input}
+                value={form.patientPackageId}
+                onChange={(e) => set('patientPackageId', e.target.value)}
+              >
+                <option value="">Do not attach a package</option>
+                {activePackages.map((pkg) => (
+                  <option key={pkg.id} value={pkg.id}>
+                    {pkg.plan?.name || 'Package'} — {pkg.usedVisits}/{pkg.totalVisits} used
+                  </option>
+                ))}
+              </select>
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                {!selectedPackage && packagesLoading && 'Loading packages...'}
+                {selectedPackage && (
+                  <>
+                    {Math.max(selectedPackage.totalVisits - selectedPackage.usedVisits, 0)} visits remaining
+                    {selectedPackage.expiryDate ? ` • Expires ${selectedPackage.expiryDate}` : ''}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* -- Quick-create new patient form -- */}
           {quickCreate && (
             <div style={{ border: '1px solid #bfdbfe', borderRadius: 10, padding: 14, background: '#eff6ff', marginBottom: 14 }}>
@@ -673,12 +895,21 @@ export default function Appointments() {
                 onChange={(value) => set('doctorId', value)}
                 options={doctors.map((d) => {
                   const isDefault = localStorage.getItem(LS_PREF_DR) === d.id;
-                  return { value: d.id, label: `${isDefault ? '* ' : ''}Dr. ${d.name} - ${d.specialization}` };
+                  const unavailable = form.appointmentDate && availableDoctorIds !== null && !availableDoctorIds.has(d.id);
+                  return {
+                    value: d.id,
+                    label: `${isDefault ? '* ' : ''}Dr. ${d.name} - ${d.specialization}${unavailable ? ' (unavailable)' : ''}`,
+                  };
                 })}
                 placeholder="Search doctor..."
                 emptyLabel="Select Doctor"
                 required
               />
+              {form.appointmentDate && availableDoctorIds !== null && form.doctorId && !availableDoctorIds.has(form.doctorId) && (
+                <div style={{ marginTop: 4, fontSize: 12, color: '#dc2626', fontWeight: 600 }}>
+                  This doctor has no schedule on the selected date.
+                </div>
+              )}
             </div>
 
             {/* Date */}
@@ -686,7 +917,15 @@ export default function Appointments() {
               <label className={styles.label}>Date *</label>
               <input type="date" className={styles.input} value={form.appointmentDate}
                 onChange={e => set('appointmentDate', e.target.value)} required
-                min={new Date().toISOString().split('T')[0]} />
+                min={!editing ? TODAY_STR : undefined} />
+              {leaveWarning && (
+                <div style={{ marginTop: 6, padding: '7px 12px', background: '#fef3c7', border: '1px solid #fde68a', borderRadius: 6, fontSize: 12, color: '#92400e', fontWeight: 600 }}>
+                  ⚠ Doctor is on leave this day
+                  {leaveWarning.reason ? ` — ${leaveWarning.reason}` : ''}
+                  {!leaveWarning.isFullDay && leaveWarning.startTime
+                    ? ` (${leaveWarning.startTime.slice(0,5)}–${leaveWarning.endTime?.slice(0,5) || '?'})` : ''}
+                </div>
+              )}
             </div>
 
             {/* Time - slot grid or plain input */}
@@ -734,7 +973,7 @@ export default function Appointments() {
             {/* Fee */}
             <div className={styles.field}>
               <label className={styles.label}>Fee (Rs)</label>
-              <input type="number" step="0.01" className={styles.input} value={form.fee} onChange={e => set('fee', e.target.value)} />
+              <input type="number" step="0.01" min={0} className={styles.input} value={form.fee} onChange={e => set('fee', e.target.value)} />
             </div>
 
             <div className={styles.field} style={{ gridColumn: 'span 2' }}>
@@ -778,6 +1017,20 @@ export default function Appointments() {
                   </div>
                 ))}
               </div>
+              {activePackages.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <div className={styles.infoLabel}>Active Packages</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                    {activePackages.map((pkg) => (
+                      <span key={pkg.id} style={{
+                        padding: '4px 10px', borderRadius: 999, background: '#e0f2fe', color: '#0369a1', fontSize: 11, fontWeight: 600,
+                      }}>
+                        {pkg.plan?.name || 'Package'} • {Math.max(pkg.totalVisits - pkg.usedVisits, 0)} remaining
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
               {(selectedPatient.allergies || selectedPatient.medicalHistory) && (
                 <div style={{ marginTop: 8, fontSize: 13, color: '#475569' }}>
                   {selectedPatient.allergies     && <div><strong>Allergies:</strong> {selectedPatient.allergies}</div>}
@@ -838,6 +1091,14 @@ export default function Appointments() {
                 </div>
               ))}
             </div>
+            {detailModal.packageAssignment?.plan && (
+              <div style={{ marginTop: 16 }}>
+                <div className={styles.infoLabel}>Package</div>
+                <div className={styles.infoValue}>
+                  {detailModal.packageAssignment.plan.name} — {detailModal.packageAssignment.usedVisits}/{detailModal.packageAssignment.totalVisits} used
+                </div>
+              </div>
+            )}
             <div style={{ marginTop: 16 }}>
               <div className={styles.infoLabel}>Status</div>
               <div style={{ marginTop: 6 }}><Badge text={STATUS_LABEL[detailModal.status] || detailModal.status} type={detailModal.status} /></div>

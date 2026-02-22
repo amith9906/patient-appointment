@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api from '../../services/api';
+import api, { packageAPI } from '../../services/api';
 import { toast } from 'react-toastify';
 
 const STEPS = ['Select Hospital', 'Select Doctor', 'Choose Date & Time', 'Confirm'];
@@ -11,11 +11,42 @@ export default function BookAppointment() {
   const [hospitals, setHospitals] = useState([]);
   const [doctors, setDoctors] = useState([]);
   const [slots, setSlots] = useState([]);
-  const [selected, setSelected] = useState({ hospital: null, doctor: null, date: '', time: '', type: 'consultation', reason: '' });
+  const [selected, setSelected] = useState({ hospital: null, doctor: null, date: '', time: '', type: 'consultation', reason: '', patientPackageId: '' });
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [patient, setPatient] = useState(null);
+  const [patientPackages, setPatientPackages] = useState([]);
+  const [packagesLoading, setPackagesLoading] = useState(false);
+  const updateSelected = (changes) => setSelected((prev) => ({ ...prev, ...changes }));
+  const selectedPackage = patientPackages.find((pkg) => pkg.id === selected.patientPackageId);
 
   useEffect(() => { api.get('/hospitals').then(r => setHospitals(r.data)); }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadPatientPackages = async () => {
+      setPackagesLoading(true);
+      try {
+        const res = await api.get('/patients/me');
+        if (!isMounted) return;
+        setPatient(res.data);
+        const pkgRes = await packageAPI.getPatientAssignments(res.data.id);
+        if (!isMounted) return;
+        setPatientPackages(pkgRes.data || []);
+        if (pkgRes.data?.length === 1) {
+          setSelected((prev) => ({ ...prev, patientPackageId: pkgRes.data[0].id }));
+        }
+      } catch (err) {
+        if (isMounted) {
+          setPatientPackages([]);
+        }
+      } finally {
+        if (isMounted) setPackagesLoading(false);
+      }
+    };
+    loadPatientPackages();
+    return () => { isMounted = false; };
+  }, []);
 
   const selectHospital = async (h) => {
     setSelected(s => ({ ...s, hospital: h, doctor: null, date: '', time: '' }));
@@ -51,6 +82,7 @@ export default function BookAppointment() {
         type: selected.type,
         reason: selected.reason,
         fee: selected.doctor.consultationFee,
+        patientPackageId: selected.patientPackageId || null,
       });
       toast.success('Appointment booked successfully!');
       navigate('/patient-portal/appointments');
@@ -159,6 +191,31 @@ export default function BookAppointment() {
                     ))}
                   </div>
                 )}
+              </div>
+            )}
+
+            {patientPackages.length > 0 && (
+              <div className="mb-5">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Use Package</label>
+                <select
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                  value={selected.patientPackageId}
+                  onChange={(e) => updateSelected({ patientPackageId: e.target.value })}
+                >
+                  <option value="">Do not use a package</option>
+                  {patientPackages.map((pkg) => (
+                    <option key={pkg.id} value={pkg.id}>
+                      {pkg.plan?.name || 'Package'} — {pkg.status} ({pkg.usedVisits}/{pkg.totalVisits})
+                    </option>
+                  ))}
+                </select>
+                <div className="text-xs text-gray-500 mt-2">
+                  {packagesLoading
+                    ? 'Checking active packages...'
+                    : selectedPackage
+                      ? `${Math.max(selectedPackage.totalVisits - selectedPackage.usedVisits, 0)} visits remaining${selectedPackage.expiryDate ? ` • Expires ${selectedPackage.expiryDate}` : ''}`
+                      : 'Select a package to attach this visit'}
+                </div>
               </div>
             )}
 

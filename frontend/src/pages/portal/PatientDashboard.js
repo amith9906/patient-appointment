@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import api from '../../services/api';
+import api, { packageAPI } from '../../services/api';
 
 export default function PatientDashboard() {
   const { user } = useAuth();
@@ -9,20 +9,43 @@ export default function PatientDashboard() {
   const [appointments, setAppointments] = useState([]);
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [packages, setPackages] = useState([]);
+  const [packagesLoading, setPackagesLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([
-      api.get('/patients/me'),
-      api.get('/patients/me/appointments'),
-      api.get('/patients/me/reports'),
-    ]).then(([p, a, r]) => {
-      setPatient(p.data);
-      const upcoming = (a.data || [])
-        .filter((x) => ['scheduled', 'postponed', 'confirmed'].includes(x.status))
-        .sort((x, y) => new Date(`${x.appointmentDate}T${x.appointmentTime || '00:00:00'}`) - new Date(`${y.appointmentDate}T${y.appointmentTime || '00:00:00'}`));
-      setAppointments(upcoming.slice(0, 3));
-      setReports(r.data.slice(0, 3));
-    }).catch(() => {}).finally(() => setLoading(false));
+    let mounted = true;
+    const loadDashboard = async () => {
+      try {
+        setLoading(true);
+        setPackagesLoading(true);
+        const [p, a, r] = await Promise.all([
+          api.get('/patients/me'),
+          api.get('/patients/me/appointments'),
+          api.get('/patients/me/reports'),
+        ]);
+        if (!mounted) return;
+        setPatient(p.data);
+        const upcoming = (a.data || [])
+          .filter((x) => ['scheduled', 'postponed', 'confirmed'].includes(x.status))
+          .sort((x, y) => new Date(`${x.appointmentDate}T${x.appointmentTime || '00:00:00'}`) - new Date(`${y.appointmentDate}T${y.appointmentTime || '00:00:00'}`));
+        setAppointments(upcoming.slice(0, 3));
+        setReports(r.data.slice(0, 3));
+        const pkgRes = await packageAPI.getPatientAssignments(p.data.id);
+        if (!mounted) return;
+        setPackages(pkgRes.data || []);
+      } catch (err) {
+        if (mounted) {
+          setPackages([]);
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false);
+          setPackagesLoading(false);
+        }
+      }
+    };
+    loadDashboard();
+    return () => { mounted = false; };
   }, []);
 
   if (loading) return <div className="flex justify-center p-20"><div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" /></div>;
@@ -85,6 +108,41 @@ export default function PatientDashboard() {
                     <div className="text-xs text-gray-500">{a.doctor.specialization}  |  {a.appointmentTime.slice(0,5)}</div>
                   </div>
                   <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusColor[a.status] || 'bg-gray-100 text-gray-600'}`}>{a.status}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold text-gray-800">Care Packages</h2>
+            <Link to="/packages" className="text-xs text-blue-600 font-medium">View plans {'->'}</Link>
+          </div>
+          {packagesLoading ? (
+            <div className="text-center py-8 text-gray-400">Fetching packages...</div>
+          ) : packages.length === 0 ? (
+            <div className="text-center py-8 text-gray-400">
+              <div className="text-4xl mb-2">Package</div>
+              <p className="text-sm">No prepaid packages assigned yet.</p>
+              <Link to="/patient-portal/book" className="mt-3 inline-block text-xs bg-blue-600 text-white px-4 py-2 rounded-lg">Book with a package</Link>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {packages.map((pkg) => (
+                <div key={pkg.id} className="flex items-center justify-between gap-3 p-3 bg-gray-50 rounded-lg">
+                  <div>
+                    <div className="font-semibold text-sm">{pkg.plan?.name || 'Care Plan'}</div>
+                    <div className="text-xs text-gray-500">
+                      {pkg.plan?.serviceType?.replace('_', ' ') || 'service'} • {Math.max(pkg.totalVisits - pkg.usedVisits, 0)} visits remaining
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className={`text-xs px-2 py-1 rounded-full ${pkg.status === 'active' ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                      {pkg.status}
+                    </span>
+                    {pkg.expiryDate && <div className="text-xs text-gray-400 mt-1">Expires {pkg.expiryDate}</div>}
+                  </div>
                 </div>
               ))}
             </div>

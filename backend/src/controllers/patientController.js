@@ -1,7 +1,14 @@
-const { Patient, Hospital, Appointment, Report, LabTest, Doctor, Vitals } = require('../models');
+const { Patient, Hospital, Appointment, Report, LabTest, Doctor, Vitals, PatientPackage, PackagePlan } = require('../models');
 const { Op } = require('sequelize');
 const { ensureScopedHospital, isSuperAdmin } = require('../utils/accessScope');
+const { ensurePackageAssignable } = require('../utils/packageAssignment');
+const { getPaginationParams, buildPaginationMeta, applyPaginationOptions } = require('../utils/pagination');
 const round2 = (n) => Number(Number(n || 0).toFixed(2));
+const toNullableUuid = (value) => {
+  if (value == null) return null;
+  const normalized = String(value).trim();
+  return normalized || null;
+};
 const toArray = (value) => {
   if (value == null) return [];
   if (Array.isArray(value)) {
@@ -59,6 +66,7 @@ exports.bookAppointment = async (req, res) => {
     if (doctor.hospitalId !== patient.hospitalId) {
       return res.status(400).json({ message: 'Doctor belongs to another hospital' });
     }
+    const packageAssignment = await ensurePackageAssignable(req.body.patientPackageId || null, patient.id, patient.hospitalId);
 
     const conflict = await Appointment.findOne({
       where: {
@@ -69,9 +77,23 @@ exports.bookAppointment = async (req, res) => {
       },
     });
     if (conflict) return res.status(400).json({ message: 'Time slot already booked' });
-    const appt = await Appointment.create({ ...req.body, patientId: patient.id });
+    const payload = {
+      ...req.body,
+      patientId: patient.id,
+      patientPackageId: packageAssignment ? packageAssignment.id : null,
+      corporateAccountId: toNullableUuid(req.body.corporateAccountId),
+    };
+    const appt = await Appointment.create(payload);
     const full = await Appointment.findByPk(appt.id, {
-      include: [{ model: Doctor, as: 'doctor', attributes: ['id', 'name', 'specialization'] }],
+      include: [
+        { model: Doctor, as: 'doctor', attributes: ['id', 'name', 'specialization'] },
+        {
+          model: PatientPackage,
+          as: 'packageAssignment',
+          attributes: ['id', 'status', 'usedVisits', 'totalVisits', 'expiryDate'],
+          include: [{ model: PackagePlan, as: 'plan', attributes: ['id', 'name', 'serviceType'] }],
+        },
+      ],
     });
     res.status(201).json(full);
   } catch (err) { res.status(400).json({ message: err.message }); }
@@ -178,11 +200,21 @@ exports.getAll = async (req, res) => {
         { phone: { [Op.iLike]: `%${search}%` } },
       ];
     }
-    const patients = await Patient.findAll({
+    const pagination = getPaginationParams(req, { defaultPerPage: 30, forcePaginate: req.query.paginate !== 'false' });
+    const baseOptions = {
       where,
       include: [{ model: Hospital, as: 'hospital', attributes: ['id', 'name'] }],
       order: [['createdAt', 'DESC']],
-    });
+    };
+    if (pagination) {
+      const queryOptions = applyPaginationOptions(baseOptions, pagination, { forceDistinct: true });
+      const patients = await Patient.findAndCountAll(queryOptions);
+      return res.json({
+        data: patients.rows,
+        meta: buildPaginationMeta(pagination, patients.count),
+      });
+    }
+    const patients = await Patient.findAll(baseOptions);
     res.json(patients);
   } catch (err) { res.status(500).json({ message: err.message }); }
 };

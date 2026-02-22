@@ -6,25 +6,50 @@ import Badge from '../components/Badge';
 import SearchableSelect from '../components/SearchableSelect';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
+import PaginationControls from '../components/PaginationControls';
 
 export default function Reports() {
   const [patients, setPatients] = useState([]);
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [reportPage, setReportPage] = useState(1);
+  const [reportPerPage, setReportPerPage] = useState(25);
+  const [reportPagination, setReportPagination] = useState(null);
   const [selectedPatient, setSelectedPatient] = useState('');
   const [uploadModal, setUploadModal] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadForm, setUploadForm] = useState({ title: '', type: 'lab_report', description: '', file: null });
 
-  useEffect(() => { patientAPI.getAll().then((r) => setPatients(r.data)); }, []);
+  useEffect(() => { patientAPI.getAll({ paginate: 'false' }).then((r) => setPatients(r.data)); }, []);
 
-  const loadReports = (patientId) => {
-    if (!patientId) { setReports([]); return; }
+  const loadReports = (patientId, page = reportPage, perPage = reportPerPage) => {
+    if (!patientId) {
+      setReports([]);
+      setReportPagination(null);
+      return;
+    }
     setLoading(true);
-    reportAPI.getByPatient(patientId).then((r) => setReports(r.data)).finally(() => setLoading(false));
+    reportAPI.getByPatient(patientId, { page, per_page: perPage })
+      .then((r) => {
+        setReports(r.data || []);
+        setReportPagination(r.pagination || null);
+      })
+      .finally(() => setLoading(false));
   };
 
-  const handlePatientChange = (id) => { setSelectedPatient(id); loadReports(id); };
+  const handlePatientChange = (id) => {
+    setSelectedPatient(id);
+    setReportPage(1);
+  };
+
+  useEffect(() => {
+    if (!selectedPatient) {
+      setReports([]);
+      setReportPagination(null);
+      return;
+    }
+    loadReports(selectedPatient, reportPage, reportPerPage);
+  }, [selectedPatient, reportPage, reportPerPage]);
 
   const handleUpload = async (e) => {
     e.preventDefault();
@@ -100,7 +125,17 @@ export default function Reports() {
           <div style={{ fontSize: 16, fontWeight: 600 }}>Select a patient to view their reports</div>
         </div>
       ) : (
-        <div className={styles.card}><Table columns={columns} data={reports} loading={loading} emptyMessage="No reports for this patient" /></div>
+        <div className={styles.card}>
+          <Table columns={columns} data={reports} loading={loading} emptyMessage="No reports for this patient" />
+          <PaginationControls
+            meta={reportPagination}
+            onPageChange={(nextPage) => setReportPage(nextPage)}
+            onPerPageChange={(value) => {
+              setReportPerPage(value);
+              setReportPage(1);
+            }}
+          />
+        </div>
       )}
 
       <Modal isOpen={uploadModal} onClose={() => setUploadModal(false)} title="Upload Medical Report">

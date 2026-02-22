@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { medicationAPI, hospitalAPI, bulkAPI } from '../services/api';
 import Modal from '../components/Modal';
 import Badge from '../components/Badge';
 import SearchableSelect from '../components/SearchableSelect';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
+import PaginationControls from '../components/PaginationControls';
 
 const CATEGORIES = ['tablet', 'capsule', 'syrup', 'injection', 'cream', 'drops', 'inhaler', 'patch', 'suppository', 'vaccine', 'other'];
 
@@ -92,6 +93,9 @@ export default function Medications() {
   const [form, setForm] = useState(INIT);
   const [stockForm, setStockForm] = useState({ quantity: 0, operation: 'add' });
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(25);
+  const [pagination, setPagination] = useState(null);
   const [catFilter, setCatFilter] = useState('');
   const [stockFilter, setStockFilter] = useState('');  // 'low' | 'expired' | 'expiring'
 
@@ -109,15 +113,50 @@ export default function Medications() {
   const [bulkResult, setBulkResult] = useState(null);
   const fileInputRef = useRef(null);
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true);
-    const params = {};
-    if (catFilter) params.category = catFilter;
-    Promise.all([medicationAPI.getAll(params), hospitalAPI.getAll()])
-      .then(([m, h]) => { setMeds(m.data); setHospitals(h.data); })
+    const params = {
+      page,
+      per_page: perPage,
+    };
+    if (stockFilter === 'vaccines') {
+      params.category = 'vaccine';
+    } else if (catFilter) {
+      params.category = catFilter;
+    }
+    if (stockFilter === 'low') {
+      params.lowStock = 'true';
+    } else if (stockFilter === 'expired') {
+      params.stockStatus = 'expired';
+    } else if (stockFilter === 'expiring') {
+      params.stockStatus = 'expiring';
+    }
+    if (search.trim()) {
+      params.search = search.trim();
+    }
+
+    medicationAPI.getAll(params)
+      .then((m) => {
+        setMeds(m.data || []);
+        setPagination(m.pagination || null);
+      })
+      .catch(() => setMeds([]))
       .finally(() => setLoading(false));
-  };
-  useEffect(load, [catFilter]);
+  }, [catFilter, page, perPage, search, stockFilter]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    hospitalAPI.getAll()
+      .then((res) => setHospitals(res.data || []))
+      .catch(() => setHospitals([]));
+  }, []);
+
+  useEffect(() => {
+    setPage(1);
+  }, [catFilter, stockFilter, search]);
 
   const loadExpiry = () => {
     setExpiryLoading(true);
@@ -226,26 +265,6 @@ export default function Medications() {
     }),
   };
 
-  // Filter logic
-  const filtered = meds.filter((m) => {
-    const q = String(search || '').toLowerCase();
-    const medName = String(m.name || '').toLowerCase();
-    const genericName = String(m.genericName || '').toLowerCase();
-    if (q && !medName.includes(q) && !genericName.includes(q)) return false;
-    if (stockFilter === 'low' && Number(m.stockQuantity || 0) >= 10) return false;
-    if (stockFilter === 'expired') {
-      if (!m.expiryDate) return false;
-      if (new Date(m.expiryDate + 'T00:00:00') >= today) return false;
-    }
-    if (stockFilter === 'expiring') {
-      if (!m.expiryDate) return false;
-      const diff = Math.floor((new Date(m.expiryDate + 'T00:00:00') - today) / (1000 * 60 * 60 * 24));
-      if (diff < 0 || diff >= 30) return false;
-    }
-    if (stockFilter === 'vaccines' && m.category !== 'vaccine') return false;
-    return true;
-  });
-
   // Expiry summary counts
   const expiryExpired = expiryData.filter(m => (m.daysRemaining || 0) < 0).length;
   const expiryCritical = expiryData.filter(m => m.daysRemaining >= 0 && m.daysRemaining < 7).length;
@@ -275,7 +294,9 @@ export default function Medications() {
       <div className={styles.pageHeader}>
         <div>
           <h2 className={styles.pageTitle}>Medications & Inventory</h2>
-          <p className={styles.pageSubtitle}>{meds.length} items  |  {stats.totalStock.toLocaleString()} total units</p>
+          <p className={styles.pageSubtitle}>
+            Showing {meds.length} of {pagination?.total ?? meds.length} items  |  {stats.totalStock.toLocaleString()} total units
+          </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className={styles.btnSecondary} onClick={() => { setBulkFile(null); setBulkResult(null); setBulkHospitalId(''); setBulkModal(true); }}>Bulk Upload</button>
@@ -377,7 +398,7 @@ export default function Medications() {
           <div className={styles.card} style={{ overflow: 'hidden' }}>
             {loading ? (
               <div style={{ padding: 40, textAlign: 'center', color: '#64748b' }}>Loading...</div>
-            ) : filtered.length === 0 ? (
+            ) : meds.length === 0 ? (
               <div style={{ padding: 40, textAlign: 'center', color: '#94a3b8' }}>No medicines found</div>
             ) : (
               <div style={{ overflowX: 'auto' }}>
@@ -390,7 +411,7 @@ export default function Medications() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map((m) => {
+                    {meds.map((m) => {
                       const days = getMedDaysRemaining(m.expiryDate);
                       const rowBg = getRowBg(days);
                       return (
@@ -455,8 +476,15 @@ export default function Medications() {
               </div>
             )}
           </div>
+          {pagination && (
+            <PaginationControls
+              meta={pagination}
+              onPageChange={(next) => setPage(next)}
+              onPerPageChange={(value) => { setPerPage(value); setPage(1); }}
+            />
+          )}
           <div style={{ marginTop: 6, fontSize: 12, color: '#94a3b8' }}>
-            Showing {filtered.length} of {meds.length} medicines
+            Showing {meds.length} of {pagination?.total ?? meds.length} medicines
           </div>
         </>
       )}

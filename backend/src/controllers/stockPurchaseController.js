@@ -10,6 +10,7 @@ const {
   User,
 } = require('../models');
 const { ensureScopedHospital, isSuperAdmin } = require('../utils/accessScope');
+const { getPaginationParams, buildPaginationMeta, applyPaginationOptions } = require('../utils/pagination');
 
 const round2 = (v) => Number(Number(v || 0).toFixed(2));
 
@@ -33,17 +34,26 @@ exports.getAll = async (req, res) => {
       where.invoiceNumber = { [Op.iLike]: `%${search}%` };
     }
 
-    const purchases = await StockPurchase.findAll({
-      where,
-      include: [
-        { model: Medication, as: 'medication', attributes: ['id', 'name', 'category', 'dosage', 'gstRate', 'hsnCode'] },
-        { model: Vendor, as: 'vendor', attributes: ['id', 'name', 'gstin', 'isActive'] },
-        { model: User, as: 'createdBy', attributes: ['id', 'name', 'email'] },
-      ],
-      order: [['purchaseDate', 'DESC'], ['createdAt', 'DESC']],
-    });
-
-    res.json(purchases);
+      const pagination = getPaginationParams(req, { defaultPerPage: 25, forcePaginate: req.query.paginate !== 'false' });
+      const baseOptions = {
+        where,
+        include: [
+          { model: Medication, as: 'medication', attributes: ['id', 'name', 'category', 'dosage', 'gstRate', 'hsnCode'] },
+          { model: Vendor, as: 'vendor', attributes: ['id', 'name', 'gstin', 'isActive'] },
+          { model: User, as: 'createdBy', attributes: ['id', 'name', 'email'] },
+        ],
+        order: [['purchaseDate', 'DESC'], ['createdAt', 'DESC']],
+      };
+      if (pagination) {
+        const queryOptions = applyPaginationOptions(baseOptions, pagination, { forceDistinct: true });
+        const purchases = await StockPurchase.findAndCountAll(queryOptions);
+        return res.json({
+          data: purchases.rows,
+          meta: buildPaginationMeta(pagination, purchases.count),
+        });
+      }
+      const purchases = await StockPurchase.findAll(baseOptions);
+      res.json(purchases);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
