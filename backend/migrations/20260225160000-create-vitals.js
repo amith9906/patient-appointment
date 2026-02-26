@@ -85,9 +85,16 @@ module.exports = {
       }
     });
 
-    // Indexes for performance
-    await queryInterface.addIndex('Vitals', ['admissionId']);
-    await queryInterface.addIndex('Vitals', ['recordedAt']);
+    // Indexes for performance (create only if columns exist to avoid failures)
+    const desc = await queryInterface.describeTable('Vitals').catch(() => ({}));
+    if (desc && (desc.admissionId || desc.admission_id)) {
+      const col = desc.admissionId ? 'admissionId' : 'admission_id';
+      await queryInterface.addIndex('Vitals', [col], { name: 'vitals_admission_id' });
+    }
+    if (desc && (desc.recordedAt || desc.recorded_at)) {
+      const colRec = desc.recordedAt ? 'recordedAt' : 'recorded_at';
+      await queryInterface.addIndex('Vitals', [colRec], { name: 'vitals_recorded_at' });
+    }
   },
 
   down: async (queryInterface, Sequelize) => {
