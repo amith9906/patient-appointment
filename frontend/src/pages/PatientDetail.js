@@ -11,6 +11,8 @@ export default function PatientDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const todayStr = () => new Date().toISOString().slice(0, 10);
+  const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+  const formatDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
   const [patient, setPatient] = useState(null);
   const [reports, setReports] = useState([]);
   const [tab, setTab] = useState('info');

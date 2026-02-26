@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { appointmentAPI, doctorAPI } from '../services/api';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
+import useDebouncedFilters from '../hooks/useDebouncedFilters';
 
 const today = () => new Date().toISOString().split('T')[0];
 
@@ -47,17 +48,25 @@ export default function QueueDisplay() {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(25);
   const [pagination, setPagination] = useState(null);
+  const pageRef = useRef(page);
+  const perPageRef = useRef(perPage);
+  useEffect(() => { pageRef.current = page; }, [page]);
+  useEffect(() => { perPageRef.current = perPage; }, [perPage]);
+
+  const filterValues = useMemo(() => ({ doctorId, date }), [doctorId, date]);
+  const { filtersRef, debouncedFilters } = useDebouncedFilters(filterValues, 400);
 
   // Load doctors once
   useEffect(() => {
     doctorAPI.getAll().then(r => setDoctors(r.data || [])).catch(() => {});
   }, []);
 
-  const fetchQueue = useCallback(async (silent = false) => {
+  const fetchQueue = useCallback(async (silent = false, overrides = {}) => {
     if (!silent) setLoading(true);
     try {
-      const params = { date, page, per_page: perPage };
-      if (doctorId) params.doctorId = doctorId;
+      const applied = overrides.filters ?? filtersRef.current;
+      const params = { date: applied.date, page: pageRef.current, per_page: perPageRef.current };
+      if (applied.doctorId) params.doctorId = applied.doctorId;
       const r = await appointmentAPI.getQueue(params);
       setQueue(r.data);
       setPagination(r.pagination || null);
@@ -66,14 +75,17 @@ export default function QueueDisplay() {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [date, doctorId]);
+  }, []);
 
-  // Fetch on filter change
-  useEffect(() => { fetchQueue(); }, [fetchQueue]);
+  // Reload when page/perPage changes (pagination controls)
+  useEffect(() => { fetchQueue(); }, [fetchQueue, page, perPage]);
 
+  // When debounced filters change: reset to page 1 and reload
   useEffect(() => {
     setPage(1);
-  }, [doctorId, date]);
+    pageRef.current = 1;
+    fetchQueue();
+  }, [debouncedFilters.date, debouncedFilters.doctorId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-refresh every 30s
   useEffect(() => {

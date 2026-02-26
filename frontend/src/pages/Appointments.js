@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { appointmentAPI, doctorAPI, packageAPI, patientAPI, doctorLeaveAPI } from '../services/api';
+import { appointmentAPI, doctorAPI, packageAPI, patientAPI, doctorLeaveAPI, shiftAPI } from '../services/api';
 import { exportToCSV } from '../utils/exportCsv';
 import Modal from '../components/Modal';
 import Table from '../components/Table';
@@ -11,6 +11,7 @@ import { toast } from 'react-toastify';
 import styles from './Page.module.css';
 import { startOfWeek, endOfWeek, format } from 'date-fns';
 import PaginationControls from '../components/PaginationControls';
+import useDebouncedValue from '../hooks/useDebouncedValue';
 
 const INIT = {
   patientId: '', doctorId: '', appointmentDate: '', appointmentTime: '', type: 'consultation',
@@ -60,6 +61,17 @@ export default function Appointments() {
   const [postponeDate, setPostponeDate] = useState('');
   const [postponeTime, setPostponeTime] = useState('');
 
+  // OPD Nursing State
+  const [onDutyNurses, setOnDutyNurses] = useState([]);
+  const [nursesLoading, setNursesLoading] = useState(false);
+  const filtersRef = useRef(filters);
+  useEffect(() => { filtersRef.current = filters; }, [filters]);
+  const pageRef = useRef(page);
+  const perPageRef = useRef(perPage);
+  useEffect(() => { pageRef.current = page; }, [page]);
+  useEffect(() => { perPageRef.current = perPage; }, [perPage]);
+  const debouncedFilters = useDebouncedValue(filters, 400);
+
   // Smart defaults
   const [smartDefaults, setSmartDefaults] = useState(() => localStorage.getItem(LS_SMART) !== 'false');
   const toggleSmartDefaults = (v) => { setSmartDefaults(v); localStorage.setItem(LS_SMART, v ? 'true' : 'false'); };
@@ -95,13 +107,16 @@ export default function Appointments() {
   const load = useCallback(() => {
     setLoading(true);
     const params = {
-      page,
-      per_page: perPage,
+      page: pageRef.current,
+      per_page: perPageRef.current,
     };
-    if (filters.status) params.status = filters.status;
-    if (filters.date) params.date = filters.date;
-    if (filters.patientName.trim()) params.patientName = filters.patientName.trim();
-    if (filters.patientPhone.trim()) params.patientPhone = filters.patientPhone.trim();
+    const activeFilters = filtersRef.current;
+    if (activeFilters?.status) params.status = activeFilters.status;
+    if (activeFilters?.date) params.date = activeFilters.date;
+    const patientName = (activeFilters?.patientName || '').trim();
+    if (patientName) params.patientName = patientName;
+    const patientPhone = (activeFilters?.patientPhone || '').trim();
+    if (patientPhone) params.patientPhone = patientPhone;
     Promise.all([
       appointmentAPI.getAll(params),
       doctorAPI.getAll(),
@@ -114,15 +129,31 @@ export default function Appointments() {
         setPatients(p.data);
       })
       .finally(() => setLoading(false));
-  }, [filters.status, filters.date, filters.patientName, filters.patientPhone, page, perPage]);
+  }, []);
 
+  // Reload when page/perPage changes (pagination controls)
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, page, perPage]);
 
   useEffect(() => {
     setPage(1);
-  }, [filters.status, filters.date, filters.patientName, filters.patientPhone]);
+    pageRef.current = 1;
+    load();
+    loadOnDutyNurses();
+  }, [debouncedFilters]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadOnDutyNurses = async () => {
+    setNursesLoading(true);
+    try {
+      const res = await shiftAPI.getAssignments({ date: TODAY_STR, workArea: 'OPD' });
+      setOnDutyNurses(res.data || []);
+    } catch {
+      setOnDutyNurses([]);
+    } finally {
+      setNursesLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (form.patientId) loadPatientAssignments(form.patientId);
@@ -614,6 +645,29 @@ export default function Appointments() {
             Suggest package use on check-in
           </label>
         </div>
+      </div>
+
+      {/* -- OPD On-Duty Nurses -- */}
+      <div style={{ marginBottom: 20, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 12, padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 12, minWidth: 200 }}>
+              <div style={{ fontSize: 20 }}>👩‍⚕️</div>
+              <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.05em' }}>OPD Nursing Team</div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: '#0c4a6e' }}>
+                      {nursesLoading ? 'Checking duty roster...' : onDutyNurses.length === 0 ? 'No nurses on duty in OPD today' : `${onDutyNurses.length} nurse(s) available`}
+                  </div>
+              </div>
+          </div>
+          {onDutyNurses.map(a => (
+              <div key={a.id} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '8px 14px', display: 'flex', alignItems: 'center', gap: 8, boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
+                  <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#dbeafe', color: '#1e40af', fontSize: 10, fontWeight: 800, display: 'flex', alignItems: 'center', justifyCenter: 'center', justifyContent: 'center' }}>
+                      {a.nurse?.name?.charAt(0)}
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>{a.nurse?.name}</div>
+                  <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e' }}></div>
+                  <div style={{ fontSize: 11, color: '#64748b' }}>{a.shift?.name}</div>
+              </div>
+          ))}
       </div>
 
       {/* -- LIST VIEW -- */}

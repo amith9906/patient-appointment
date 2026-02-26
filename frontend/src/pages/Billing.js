@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { appointmentAPI, corporateAPI, doctorAPI, packageAPI } from '../services/api';
 import { exportToCSV } from '../utils/exportCsv';
 import Modal from '../components/Modal';
@@ -6,6 +6,7 @@ import SearchableSelect from '../components/SearchableSelect';
 import PaginationControls from '../components/PaginationControls';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
+import useDebouncedFilters from '../hooks/useDebouncedFilters';
 
 const fmt = (n) => `Rs ${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -117,9 +118,14 @@ export default function Billing() {
   const [loading, setLoading] = useState(true);
   const [quickClaimLoadingId, setQuickClaimLoadingId] = useState('');
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const { filtersRef, debouncedFilters } = useDebouncedFilters(filters, 400);
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(25);
   const [pagination, setPagination] = useState(null);
+  const pageRef = useRef(page);
+  const perPageRef = useRef(perPage);
+  useEffect(() => { pageRef.current = page; }, [page]);
+  useEffect(() => { perPageRef.current = perPage; }, [perPage]);
 
   const [detailAppt, setDetailAppt] = useState(null);
   const [billItems, setBillItems] = useState([]);
@@ -148,11 +154,11 @@ export default function Billing() {
     notes: '',
   });
 
-  const load = (overrides = {}) => {
+  const load = useCallback((overrides = {}) => {
     setLoading(true);
-    const targetPage = overrides.page ?? page;
-    const targetPerPage = overrides.perPage ?? perPage;
-    const nextFilters = overrides.filters ?? filters;
+    const targetPage = overrides.page ?? pageRef.current;
+    const targetPerPage = overrides.perPage ?? perPageRef.current;
+    const nextFilters = overrides.filters ?? filtersRef.current;
     const params = {
       page: targetPage,
       per_page: targetPerPage,
@@ -177,9 +183,28 @@ export default function Billing() {
         setPagination(a.pagination || null);
       })
       .finally(() => setLoading(false));
-  };
+  }, []);
 
-  useEffect(load, []);
+  // Reload when page/perPage changes (pagination controls)
+  useEffect(() => {
+    load();
+  }, [load, page, perPage]);
+
+  // When debounced filters change: reset to page 1 and reload
+  useEffect(() => {
+    setPage(1);
+    pageRef.current = 1;
+    load();
+  }, [ // eslint-disable-line react-hooks/exhaustive-deps
+    debouncedFilters.dateFrom,
+    debouncedFilters.dateTo,
+    debouncedFilters.doctorId,
+    debouncedFilters.isPaid,
+    debouncedFilters.billingType,
+    debouncedFilters.claimStatus,
+    debouncedFilters.patientName,
+    debouncedFilters.patientPhone,
+  ]);
 
   const applyFilters = () => {
     setPage(1);

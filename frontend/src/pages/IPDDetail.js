@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ipdAPI, doctorAPI, packageAPI } from '../services/api';
+import { ipdAPI, doctorAPI, packageAPI, nurseAPI, shiftAPI } from '../services/api';
 import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
 import styles from './Page.module.css';
@@ -29,9 +29,10 @@ const NOTE_TYPE_STYLE = {
 const GST_DEFAULTS = {
   room_charges: 0, consultation: 0, procedure: 5, lab_test: 0,
   medication: 5, ot_charges: 5, nursing: 0, equipment: 12, other: 0,
+  medicine: 5, patient_expense: 12,
 };
 
-const ITEM_TYPES = ['room_charges', 'consultation', 'procedure', 'lab_test', 'medication', 'ot_charges', 'nursing', 'equipment', 'other'];
+const ITEM_TYPES = ['room_charges', 'consultation', 'procedure', 'lab_test', 'medication', 'ot_charges', 'nursing', 'equipment', 'other', 'medicine', 'patient_expense'];
 const PAYMENT_METHODS = ['cash', 'card', 'upi', 'insurance', 'corporate', 'cheque', 'online', 'other'];
 
 const INIT_NOTE = { noteType: 'progress', content: '', doctorId: '' };
@@ -73,6 +74,14 @@ export default function IPDDetail() {
   const [savingItem, setSavingItem] = useState(false);
   const [savingPayment, setSavingPayment] = useState(false);
   const [discount, setDiscount] = useState('');
+
+  // Nurses
+  const [nurseAssignments, setNurseAssignments] = useState([]);
+  const [nurses, setNurses] = useState([]);
+  const [shifts, setShifts] = useState([]);
+  const [showAssignNurse, setShowAssignNurse] = useState(false);
+  const [assignNurseForm, setAssignNurseForm] = useState({ nurseId: '', shiftId: '', notes: '' });
+  const [assigningNurse, setAssigningNurse] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -142,13 +151,31 @@ export default function IPDDetail() {
   const handleTabChange = (t) => {
     setTab(t);
     if (t === 'billing' && bill.billItems.length === 0 && !billLoading) loadBill();
+    if (t === 'nurses') loadNursingInfo();
+  };
+
+  const loadNursingInfo = async () => {
+    try {
+      const [aRes, nRes, sRes] = await Promise.all([
+        ipdAPI.getNurses(id),
+        nurseAPI.getAll(),
+        shiftAPI.getAll()
+      ]);
+      setNurseAssignments(aRes.data);
+      setNurses(nRes.data);
+      setShifts(sRes.data);
+    } catch {
+      toast.error('Failed to load nursing info');
+    }
   };
 
   // ─── Notes ────────────────────────────────────────────────────────────────────
   const handleAddNote = async (e) => {
     e.preventDefault();
     if (!noteForm.content.trim()) return toast.error('Note content is required');
-    if (!noteForm.doctorId && user.role !== 'doctor') return toast.error('Select a doctor');
+    if (user.role !== 'nurse' && user.role !== 'doctor' && !noteForm.doctorId && !noteForm.nurseId) {
+      return toast.error('Attribution required');
+    }
     setAddingNote(true);
     try {
       await ipdAPI.addNote(id, noteForm);
@@ -414,7 +441,7 @@ export default function IPDDetail() {
 
       {/* Tab Bar */}
       <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid #e2e8f0', marginBottom: 20 }}>
-        {[['overview','Overview'],['notes',`Notes (${notes.length})`],['billing','Billing']].map(([t, label]) => (
+        {[['overview','Overview'],['notes',`Notes (${notes.length})`],['nurses','Nurses'],['billing','Billing']].map(([t, label]) => (
           <button key={t} onClick={() => handleTabChange(t)}
             style={{ padding: '8px 20px', border: 'none', borderBottom: tab === t ? '3px solid #2563eb' : '3px solid transparent', background: 'none', fontWeight: 600, fontSize: 14, color: tab === t ? '#2563eb' : '#64748b', cursor: 'pointer' }}>
             {label}
@@ -519,6 +546,23 @@ export default function IPDDetail() {
                     </select></div>
                 )}
               </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                {user.role === 'nurse' && (
+                  <div style={{ background: '#dcfce7', padding: '10px 12px', borderRadius: 8, fontSize: 13, color: '#15803d', fontWeight: 600 }}>
+                    Adding note as Nurse
+                  </div>
+                )}
+                {user.role === 'doctor' && (
+                  <div style={{ background: '#dbeafe', padding: '10px 12px', borderRadius: 8, fontSize: 13, color: '#1d4ed8', fontWeight: 600 }}>
+                    Adding note as Doctor
+                  </div>
+                )}
+                {(!['nurse', 'doctor'].includes(user.role)) && (
+                   <div style={{ background: '#fef3c7', padding: '10px 12px', borderRadius: 8, fontSize: 13, color: '#92400e', fontWeight: 600 }}>
+                      Staff attribution will be logged.
+                   </div>
+                )}
+              </div>
               <div><label className={styles.label}>Note Content *</label>
                 <textarea className={styles.input} rows={3} value={noteForm.content} required
                   onChange={e => setNoteForm(f => ({ ...f, content: e.target.value }))}
@@ -540,15 +584,116 @@ export default function IPDDetail() {
                       <span style={{ ...NOTE_TYPE_STYLE[note.noteType], borderRadius: 6, padding: '2px 10px', fontSize: 12, fontWeight: 600 }}>
                         {note.noteType.charAt(0).toUpperCase() + note.noteType.slice(1)}
                       </span>
-                      <span style={{ fontSize: 13, fontWeight: 500, color: '#374151' }}>Dr. {note.doctor?.name}</span>
+                      <span style={{ fontSize: 13, fontWeight: 500, color: '#374151' }}>
+                        {note.doctor?.name ? `Dr. ${note.doctor.name}` : note.nurse?.name ? `Nurse ${note.nurse.name}` : 'Unknown'}
+                      </span>
                     </div>
-                    <span style={{ fontSize: 12, color: '#94a3b8' }}>{formatDateTime(note.noteDate)}</span>
+                    <span style={{ fontSize: 12, color: '#94a3b8' }}>{formatDateTime(note.noteDate || note.createdAt)}</span>
                   </div>
                   <div style={{ fontSize: 14, color: '#1e293b', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{note.content}</div>
                 </div>
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ─── Nurses Tab ─── */}
+      {tab === 'nurses' && (
+        <div className={styles.card} style={{ padding: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h2 style={{ fontWeight: 700, fontSize: 15 }}>Nursing Care & Assignments</h2>
+            {isAdmin && (
+              <button className={styles.btnPrimary} style={{ fontSize: 13 }} onClick={() => setShowAssignNurse(true)}>
+                + Assign Nurse
+              </button>
+            )}
+          </div>
+
+          {showAssignNurse && (
+            <div style={{ background: '#f0fdfa', border: '1px solid #5eead4', borderRadius: 10, padding: 16, marginBottom: 20 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 700, color: '#0f766e', marginBottom: 12 }}>New Assignment</h3>
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                setAssigningNurse(true);
+                try {
+                  await ipdAPI.assignNurse(id, assignNurseForm);
+                  toast.success('Nurse assigned');
+                  setShowAssignNurse(false);
+                  loadNursingInfo();
+                } catch (err) { toast.error(err.response?.data?.message || 'Error'); }
+                finally { setAssigningNurse(false); }
+              }} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                <div>
+                  <label className={styles.label}>Nurse *</label>
+                  <select className={styles.input} value={assignNurseForm.nurseId} onChange={e => setAssignNurseForm({ ...assignNurseForm, nurseId: e.target.value })} required>
+                    <option value="">Select Nurse...</option>
+                    {nurses.map(n => <option key={n.id} value={n.id}>{n.name} ({n.specialization})</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={styles.label}>Shift (Optional)</label>
+                  <select className={styles.input} value={assignNurseForm.shiftId} onChange={e => setAssignNurseForm({ ...assignNurseForm, shiftId: e.target.value })}>
+                    <option value="">Current Shift...</option>
+                    {shifts.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={styles.label}>Notes</label>
+                  <input className={styles.input} value={assignNurseForm.notes} onChange={e => setAssignNurseForm({ ...assignNurseForm, notes: e.target.value })} placeholder="Responsibilities..." />
+                </div>
+                <div style={{ gridColumn: 'span 3', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                  <button type="button" className={styles.btnSecondary} onClick={() => setShowAssignNurse(false)}>Cancel</button>
+                  <button type="submit" className={styles.btnPrimary} style={{ background: '#0f766e' }} disabled={assigningNurse}>Confirm Assignment</button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: '#f8fafc', textAlign: 'left' }}>
+                  <th style={{ padding: '10px', color: '#64748b', fontWeight: 600 }}>Nurse Name</th>
+                  <th style={{ padding: '10px', color: '#64748b', fontWeight: 600 }}>Shift</th>
+                  <th style={{ padding: '10px', color: '#64748b', fontWeight: 600 }}>Assigned At</th>
+                  <th style={{ padding: '10px', color: '#64748b', fontWeight: 600 }}>Status</th>
+                  {isAdmin && <th style={{ padding: '10px', color: '#64748b', fontWeight: 600 }}>Action</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {nurseAssignments.map(a => (
+                  <tr key={a.id} style={{ borderTop: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '10px', fontWeight: 600 }}>{a.nurse?.name}</td>
+                    <td style={{ padding: '10px' }}>{a.shift?.name || 'Manual'}</td>
+                    <td style={{ padding: '10px' }}>{formatDateTime(a.assignedAt)}</td>
+                    <td style={{ padding: '10px' }}>
+                      <span style={{ background: a.removedAt ? '#f1f5f9' : '#dcfce7', color: a.removedAt ? '#64748b' : '#15803d', padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700 }}>
+                        {a.removedAt ? 'HISTORY' : 'ACTIVE'}
+                      </span>
+                    </td>
+                    {isAdmin && (
+                      <td style={{ padding: '10px' }}>
+                        {!a.removedAt && (
+                          <button className="text-red-500 text-xs font-bold hover:underline" onClick={async () => {
+                            if (!window.confirm('Remove this nursing assignment?')) return;
+                            try {
+                              await ipdAPI.removeNurse(id, a.id);
+                              toast.success('Nurse removed');
+                              loadNursingInfo();
+                            } catch { toast.error('Error'); }
+                          }}>REMOVE</button>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+                {nurseAssignments.length === 0 && (
+                  <tr><td colSpan="5" style={{ padding: 20, textAlign: 'center', color: '#94a3b8' }}>No nurses assigned to this patient yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

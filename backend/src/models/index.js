@@ -38,6 +38,16 @@ const IPDNote = require('./IPDNote');
 const OTSchedule = require('./OTSchedule');
 const IPDBillItem = require('./IPDBillItem');
 const IPDPayment = require('./IPDPayment');
+const Nurse = require('./Nurse');
+const Shift = require('./Shift');
+const NurseShiftAssignment = require('./NurseShiftAssignment');
+const NursePatientAssignment = require('./NursePatientAssignment');
+const NurseLeave = require('./NurseLeave');
+const MedicationAdministration = require('./MedicationAdministration');
+const NurseHandover = require('./NurseHandover');
+const FluidBalance = require('./FluidBalance');
+const ClinicalNote = require('./ClinicalNote');
+const Notification = require('./Notification');
 
 // Hospital -> HospitalSettings (one-to-one)
 Hospital.hasOne(HospitalSettings, { foreignKey: 'hospitalId', as: 'settings' });
@@ -58,6 +68,12 @@ DoctorAvailability.belongsTo(Doctor, { foreignKey: 'doctorId', as: 'doctor' });
 // Department -> Doctor (one-to-many)
 Department.hasMany(Doctor, { foreignKey: 'departmentId', as: 'doctors' });
 Doctor.belongsTo(Department, { foreignKey: 'departmentId', as: 'department' });
+Department.belongsTo(User, { foreignKey: 'hodUserId', as: 'hod' });
+User.hasMany(Department, { foreignKey: 'hodUserId', as: 'managedDepartments' });
+
+// User -> Notification (one-to-many)
+User.hasMany(Notification, { foreignKey: 'userId', as: 'notifications' });
+Notification.belongsTo(User, { foreignKey: 'userId', as: 'user' });
 
 // User -> Doctor (one-to-one)
 User.hasOne(Doctor, { foreignKey: 'userId', as: 'doctorProfile' });
@@ -95,9 +111,31 @@ LabTest.belongsTo(Lab, { foreignKey: 'labId', as: 'lab' });
 Appointment.hasOne(Vitals, { foreignKey: 'appointmentId', as: 'vitals' });
 Vitals.belongsTo(Appointment, { foreignKey: 'appointmentId', as: 'appointment' });
 
+// IPDAdmission -> Vitals (one-to-many)
+IPDAdmission.hasMany(Vitals, { foreignKey: 'admissionId', as: 'vitalsHistory' });
+Vitals.belongsTo(IPDAdmission, { foreignKey: 'admissionId', as: 'admission' });
+
+// Nurse -> Vitals (one-to-many)
+Nurse.hasMany(Vitals, { foreignKey: 'nurseId', as: 'vitalsRecorded' });
+Vitals.belongsTo(Nurse, { foreignKey: 'nurseId', as: 'nurse' });
+
 // Appointment -> Prescription (one-to-many)
 Appointment.hasMany(Prescription, { foreignKey: 'appointmentId', as: 'prescriptions' });
 Prescription.belongsTo(Appointment, { foreignKey: 'appointmentId', as: 'appointment' });
+
+// IPDAdmission -> Prescription (one-to-many)
+IPDAdmission.hasMany(Prescription, { foreignKey: 'admissionId', as: 'ipdPrescriptions' });
+Prescription.belongsTo(IPDAdmission, { foreignKey: 'admissionId', as: 'admission' });
+
+// MedicationAdministration associations
+Prescription.hasMany(MedicationAdministration, { foreignKey: 'prescriptionId', as: 'administrations' });
+MedicationAdministration.belongsTo(Prescription, { foreignKey: 'prescriptionId', as: 'prescription' });
+
+IPDAdmission.hasMany(MedicationAdministration, { foreignKey: 'admissionId', as: 'medicationLogs' });
+MedicationAdministration.belongsTo(IPDAdmission, { foreignKey: 'admissionId', as: 'admission' });
+
+Nurse.hasMany(MedicationAdministration, { foreignKey: 'nurseId', as: 'medicationAdministered' });
+MedicationAdministration.belongsTo(Nurse, { foreignKey: 'nurseId', as: 'nurse' });
 
 // Prescription -> Medication (many-to-one)
 Medication.hasMany(Prescription, { foreignKey: 'medicationId', as: 'prescriptions' });
@@ -146,6 +184,10 @@ BillItem.belongsTo(Appointment, { foreignKey: 'appointmentId', as: 'appointment'
 // Hospital -> MedicineInvoice (one-to-many)
 Hospital.hasMany(MedicineInvoice, { foreignKey: 'hospitalId', as: 'medicineInvoices' });
 MedicineInvoice.belongsTo(Hospital, { foreignKey: 'hospitalId', as: 'hospital' });
+
+// MedicineInvoice -> Report (one-to-many): allow linking uploaded prescriptions to invoices
+MedicineInvoice.hasMany(Report, { foreignKey: 'invoiceId', as: 'reports' });
+Report.belongsTo(MedicineInvoice, { foreignKey: 'invoiceId', as: 'invoice' });
 
 // Patient -> MedicineInvoice (one-to-many)
 Patient.hasMany(MedicineInvoice, { foreignKey: 'patientId', as: 'medicineInvoices' });
@@ -282,6 +324,8 @@ StockPurchaseReturn.belongsTo(User, { foreignKey: 'createdByUserId', as: 'create
 // Doctor -> DoctorLeave (one-to-many)
 Doctor.hasMany(DoctorLeave, { foreignKey: 'doctorId', as: 'leaves' });
 DoctorLeave.belongsTo(Doctor, { foreignKey: 'doctorId', as: 'doctor' });
+DoctorLeave.belongsTo(User, { foreignKey: 'approvedByUserId', as: 'approvedBy' });
+User.hasMany(DoctorLeave, { foreignKey: 'approvedByUserId', as: 'approvedLeaves' });
 
 // Room associations
 Hospital.hasMany(Room, { foreignKey: 'hospitalId', as: 'rooms' });
@@ -357,6 +401,66 @@ PatientPackage.belongsTo(PackagePlan, { foreignKey: 'packagePlanId', as: 'plan' 
 User.hasMany(PatientPackage, { foreignKey: 'createdByUserId', as: 'createdPatientPackages' });
 PatientPackage.belongsTo(User, { foreignKey: 'createdByUserId', as: 'createdBy' });
 
+// Nurse associations
+Hospital.hasMany(Nurse, { foreignKey: 'hospitalId', as: 'nurses' });
+Nurse.belongsTo(Hospital, { foreignKey: 'hospitalId', as: 'hospital' });
+Department.hasMany(Nurse, { foreignKey: 'departmentId', as: 'nurses' });
+Nurse.belongsTo(Department, { foreignKey: 'departmentId', as: 'department' });
+User.hasOne(Nurse, { foreignKey: 'userId', as: 'nurseProfile' });
+Nurse.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+
+// ClinicalNote associations
+Patient.hasMany(ClinicalNote, { foreignKey: 'patientId', as: 'clinicalNotes' });
+ClinicalNote.belongsTo(Patient, { foreignKey: 'patientId', as: 'patient' });
+User.hasMany(ClinicalNote, { foreignKey: 'authorId', as: 'clinicalNotesAuthored' });
+ClinicalNote.belongsTo(User, { foreignKey: 'authorId', as: 'author' });
+
+// Shift associations
+Hospital.hasMany(Shift, { foreignKey: 'hospitalId', as: 'shifts' });
+Shift.belongsTo(Hospital, { foreignKey: 'hospitalId', as: 'hospital' });
+
+// NurseShiftAssignment associations
+Nurse.hasMany(NurseShiftAssignment, { foreignKey: 'nurseId', as: 'shiftAssignments' });
+NurseShiftAssignment.belongsTo(Nurse, { foreignKey: 'nurseId', as: 'nurse' });
+Shift.hasMany(NurseShiftAssignment, { foreignKey: 'shiftId', as: 'assignments' });
+NurseShiftAssignment.belongsTo(Shift, { foreignKey: 'shiftId', as: 'shift' });
+
+// NursePatientAssignment associations
+Nurse.hasMany(NursePatientAssignment, { foreignKey: 'nurseId', as: 'patientAssignments' });
+NursePatientAssignment.belongsTo(Nurse, { foreignKey: 'nurseId', as: 'nurse' });
+IPDAdmission.hasMany(NursePatientAssignment, { foreignKey: 'admissionId', as: 'nurseAssignments' });
+NursePatientAssignment.belongsTo(IPDAdmission, { foreignKey: 'admissionId', as: 'admission' });
+Shift.hasMany(NursePatientAssignment, { foreignKey: 'shiftId', as: 'nursePatientAssignments' });
+NursePatientAssignment.belongsTo(Shift, { foreignKey: 'shiftId', as: 'shift' });
+Doctor.hasMany(NursePatientAssignment, { foreignKey: 'doctorId', as: 'nurseAssignments' });
+NursePatientAssignment.belongsTo(Doctor, { foreignKey: 'doctorId', as: 'doctor' });
+
+// NurseLeave associations
+Nurse.hasMany(NurseLeave, { foreignKey: 'nurseId', as: 'leaves' });
+NurseLeave.belongsTo(Nurse, { foreignKey: 'nurseId', as: 'nurse' });
+NurseLeave.belongsTo(User, { foreignKey: 'approvedByUserId', as: 'approvedBy' });
+User.hasMany(NurseLeave, { foreignKey: 'approvedByUserId', as: 'approvedNurseLeaves' });
+
+// Update IPDNote associations for Nurse
+Nurse.hasMany(IPDNote, { foreignKey: 'nurseId', as: 'notes' });
+IPDNote.belongsTo(Nurse, { foreignKey: 'nurseId', as: 'nurse' });
+
+// NurseHandover associations
+IPDAdmission.hasMany(NurseHandover, { foreignKey: 'admissionId', as: 'handovers' });
+NurseHandover.belongsTo(IPDAdmission, { foreignKey: 'admissionId', as: 'admission' });
+
+Nurse.hasMany(NurseHandover, { foreignKey: 'fromNurseId', as: 'handoversGiven' });
+NurseHandover.belongsTo(Nurse, { foreignKey: 'fromNurseId', as: 'fromNurse' });
+
+NurseHandover.belongsTo(Nurse, { foreignKey: 'toNurseId', as: 'toNurse' });
+
+// FluidBalance associations
+IPDAdmission.hasMany(FluidBalance, { foreignKey: 'admissionId', as: 'fluidHistory' });
+FluidBalance.belongsTo(IPDAdmission, { foreignKey: 'admissionId', as: 'admission' });
+
+Nurse.hasMany(FluidBalance, { foreignKey: 'nurseId', as: 'fluidRecorded' });
+FluidBalance.belongsTo(Nurse, { foreignKey: 'nurseId', as: 'nurse' });
+
 module.exports = {
   sequelize,
   User,
@@ -398,4 +502,14 @@ module.exports = {
   IPDBillItem,
   IPDPayment,
   DoctorAvailability,
+  Nurse,
+  Shift,
+  NurseShiftAssignment,
+  NursePatientAssignment,
+  NurseLeave,
+  MedicationAdministration,
+  NurseHandover,
+  FluidBalance,
+  ClinicalNote,
+  Notification,
 };

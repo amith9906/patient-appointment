@@ -7,6 +7,7 @@ const Department = sequelize.define('Department', {
   description: { type: DataTypes.TEXT },
   floor: { type: DataTypes.STRING },
   isActive: { type: DataTypes.BOOLEAN, defaultValue: true },
+  hodUserId: { type: DataTypes.UUID, allowNull: true },
 });
 
 module.exports = Department;

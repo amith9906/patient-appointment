@@ -6,7 +6,6 @@ import {
   XAxis,
   YAxis,
   Legend,
-  LineChart,
   Line,
   BarChart,
   Bar,
@@ -14,9 +13,10 @@ import {
   Pie,
   Cell,
 } from 'recharts';
-import { medicineInvoiceAPI, medicationAPI, patientAPI, pdfAPI } from '../services/api';
+import { medicineInvoiceAPI, medicationAPI, patientAPI, pdfAPI, reportAPI } from '../services/api';
 import Table from '../components/Table';
 import Modal from '../components/Modal';
+import SearchableSelect from '../components/SearchableSelect';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
 import PaginationControls from '../components/PaginationControls';
@@ -34,7 +34,7 @@ const toRequestHash = (raw) => {
 };
 
 const round2 = (v) => Math.round(Number(v || 0) * 100) / 100;
-const INIT_ITEM = { medicationId: '', quantity: 1, unitPrice: 0, discountPct: 0, taxPct: 0 };
+const INIT_ITEM = { medicationId: '', quantity: 1, unitPrice: 0, discountPct: 0, taxPct: 0, prescriberDoctorName: '' };
 const INVOICE_DRAFT_KEY = 'medicine_invoice_draft_v1';
 const INVOICE_NAMED_DRAFTS_KEY = 'medicine_invoice_named_drafts_v1';
 const CUSTOM_TEMPLATE_KEY = 'medicine_invoice_custom_templates_v1';
@@ -47,6 +47,11 @@ const QUICK_MEDICINE_INIT = {
   purchasePrice: 0,
   gstRate: 0,
   hsnCode: '',
+  scheduleCategory: 'otc',
+  isRestrictedDrug: false,
+  interactsWith: '',
+  location: '',
+  reorderLevel: 10,
   requiresPrescription: true,
 };
 
@@ -56,6 +61,8 @@ const getEmptyInvoiceForm = () => ({
   invoiceDate: new Date().toISOString().slice(0, 10),
   paymentMode: 'cash',
   isPaid: true,
+  applyRoundOff: true,
+  paymentBreakup: { cash: 0, upi: 0, card: 0 },
   notes: '',
   items: [{ ...INIT_ITEM }],
 });
@@ -107,6 +114,8 @@ const QUICK_BASKET_TEMPLATES = [
   },
 ];
 
+const CHRONIC_CONDITIONS = ['Diabetes', 'Hypertension', 'Asthma', 'COPD', 'CKD', 'Thyroid Disorder', 'Cardiac Disease', 'Epilepsy'];
+
 function GSTRateBadge({ rate }) {
   const r = Number(rate || 0);
   const colors = GST_RATE_COLORS[r] || { bg: '#f1f5f9', color: '#64748b' };
@@ -130,10 +139,27 @@ export default function MedicineInvoices() {
   const [invoicePagination, setInvoicePagination] = useState(null);
   const [analytics, setAnalytics] = useState(null);
   const [gstReport, setGstReport] = useState(null);
+  const [scheduleHLog, setScheduleHLog] = useState([]);
+  const [scheduleHLoading, setScheduleHLoading] = useState(false);
+  const [viewModalOpen, setViewModalOpen] = useState(false);
+  const [viewRow, setViewRow] = useState(null);
+  const [viewPatient, setViewPatient] = useState(null);
+  const [patientReports, setPatientReports] = useState([]);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadedReport, setUploadedReport] = useState(null);
+  const [reminderCandidates, setReminderCandidates] = useState([]);
+  const [reminderLoading, setReminderLoading] = useState(false);
+  const [reminderDays, setReminderDays] = useState(25);
+  const [deliveryRows, setDeliveryRows] = useState([]);
+  const [deliveryLoading, setDeliveryLoading] = useState(false);
   const [gstLoading, setGstLoading] = useState(false);
   const [allowRiskyExport, setAllowRiskyExport] = useState(false);
   const [cloningInvoiceId, setCloningInvoiceId] = useState('');
   const [loadingPatientLastInvoice, setLoadingPatientLastInvoice] = useState(false);
+  const [barcodeInput, setBarcodeInput] = useState('');
+  const [interactionWarnings, setInteractionWarnings] = useState([]);
+  const [checkingInteractions, setCheckingInteractions] = useState(false);
   const [returnModal, setReturnModal] = useState(null);
   const [returnRows, setReturnRows] = useState([]);
   const [returnReason, setReturnReason] = useState('');
@@ -151,6 +177,8 @@ export default function MedicineInvoices() {
     gender: '',
     dateOfBirth: '',
     bloodGroup: '',
+    address: '',
+    chronicConditions: [],
   });
 
   const [gstInfoOpen, setGstInfoOpen] = useState(false);
@@ -215,6 +243,110 @@ export default function MedicineInvoices() {
       toast.error('Failed to load GST report');
     } finally {
       setGstLoading(false);
+    }
+  };
+
+  const loadScheduleHLog = async () => {
+    setScheduleHLoading(true);
+    try {
+      const params = {};
+      if (from) params.from = from;
+      if (to) params.to = to;
+      const res = await medicineInvoiceAPI.getScheduleHLog(params);
+      setScheduleHLog(res.data?.data || []);
+    } catch {
+      setScheduleHLog([]);
+      toast.error('Failed to load Schedule-H log');
+    } finally {
+      setScheduleHLoading(false);
+    }
+  };
+
+  const openView = async (row) => {
+    setViewRow(row);
+    setUploadedReport(null);
+    setViewPatient(null);
+    setViewModalOpen(true);
+    try {
+      if (row?.patient?.id) {
+        const [pResp, rResp] = await Promise.all([
+          patientAPI.getOne(row.patient.id),
+          reportAPI.getPatientReports(row.patient.id, { type: 'prescription', paginate: 'false' }),
+        ]);
+        setViewPatient(pResp.data || pResp);
+        setPatientReports(rResp.data || rResp || []);
+      }
+    } catch (err) {
+      setViewPatient(null);
+      setPatientReports([]);
+    }
+  };
+
+  const closeView = () => {
+    setViewModalOpen(false);
+    setViewRow(null);
+    setViewPatient(null);
+    setSelectedFile(null);
+    setUploadedReport(null);
+  };
+
+  const handleFileChange = (e) => {
+    setSelectedFile(e.target.files?.[0] || null);
+  };
+
+  const handleUpload = async (e) => {
+    e?.preventDefault?.();
+    if (!viewRow) return;
+    if (!selectedFile) {
+      toast.error('Please select a file to upload');
+      return;
+    }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', selectedFile);
+      fd.append('title', `Prescription for ${viewRow.invoiceNumber || viewRow.invoiceId}`);
+      const res = await medicineInvoiceAPI.uploadPrescription(viewRow.invoiceId, fd);
+      const rpt = res.data || res;
+      setUploadedReport(rpt);
+      // append to patientReports so UI shows it immediately
+      setPatientReports((prev) => (Array.isArray(prev) ? [rpt, ...prev] : [rpt]));
+      toast.success('Prescription uploaded');
+      setSelectedFile(null);
+    } catch (err) {
+      toast.error('Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const loadReminderCandidates = async (days = reminderDays) => {
+    setReminderLoading(true);
+    try {
+      const params = { days: Number(days || 25) };
+      const res = await medicineInvoiceAPI.getReminderCandidates(params);
+      setReminderCandidates(res.data?.data || []);
+    } catch {
+      setReminderCandidates([]);
+      toast.error('Failed to load reminder candidates');
+    } finally {
+      setReminderLoading(false);
+    }
+  };
+
+  const loadDeliveryDashboard = async () => {
+    setDeliveryLoading(true);
+    try {
+      const params = { paginate: 'false' };
+      if (from) params.from = from;
+      if (to) params.to = to;
+      const res = await medicineInvoiceAPI.getAll(params);
+      setDeliveryRows((res.data || []).map((r) => ({ ...r, deliveryStatus: r.deliveryStatus || 'pending' })));
+    } catch {
+      setDeliveryRows([]);
+      toast.error('Failed to load delivery dashboard');
+    } finally {
+      setDeliveryLoading(false);
     }
   };
 
@@ -324,7 +456,35 @@ export default function MedicineInvoices() {
 
   useEffect(() => {
     if (tab === 'gst-report') loadGSTReport();
+    if (tab === 'schedule-h-log') loadScheduleHLog();
+    if (tab === 'reminder-candidates') loadReminderCandidates(reminderDays);
+    if (tab === 'delivery-dashboard') loadDeliveryDashboard();
   }, [tab]);
+
+  useEffect(() => {
+    if (tab !== 'create') return;
+    const medicationIds = (form.items || []).map((it) => it.medicationId).filter(Boolean);
+    if (medicationIds.length < 2) {
+      setInteractionWarnings([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setCheckingInteractions(true);
+      try {
+        const res = await medicineInvoiceAPI.checkInteractions({ medicationIds });
+        if (!cancelled) setInteractionWarnings(res.data?.warnings || []);
+      } catch {
+        if (!cancelled) setInteractionWarnings([]);
+      } finally {
+        if (!cancelled) setCheckingInteractions(false);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [tab, form.items]);
 
   const setItem = (index, key, value) => {
     setForm((prev) => {
@@ -338,6 +498,34 @@ export default function MedicineInvoices() {
       next[index] = item;
       return { ...prev, items: next };
     });
+  };
+
+  const handleBarcodeAdd = async () => {
+    const code = String(barcodeInput || '').trim();
+    if (!code) return;
+    try {
+      const res = await medicineInvoiceAPI.scanBarcode(code);
+      const med = res.data?.medication;
+      if (!med?.id) return toast.error('No medicine found for barcode');
+      setForm((prev) => ({
+        ...prev,
+        items: [
+          ...prev.items,
+          {
+            ...INIT_ITEM,
+            medicationId: med.id,
+            medicationSearch: medicationOptionLabel(med),
+            quantity: 1,
+            unitPrice: Number(med.unitPrice || 0),
+            taxPct: Number(med.gstRate || 0),
+          },
+        ],
+      }));
+      setBarcodeInput('');
+      toast.success(`Added ${med.name} by barcode`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Barcode scan failed');
+    }
   };
   const adjustItemQuantity = (index, delta) => {
     setForm((prev) => {
@@ -689,9 +877,20 @@ export default function MedicineInvoices() {
     const discountAmount = rows.reduce((s, r) => s + r.lineDiscount, 0);
     const taxAmount = rows.reduce((s, r) => s + r.lineTax, 0);
     const totalAmount = subtotal - discountAmount + taxAmount;
-
-    return { rows, subtotal, discountAmount, taxAmount, totalAmount };
-  }, [form.items]);
+    const roundedTotal = form.applyRoundOff ? Math.round(totalAmount) : round2(totalAmount);
+    const roundOffAmount = round2(roundedTotal - totalAmount);
+    const grandTotal = round2(roundedTotal);
+    const paymentBreakup = form.paymentBreakup || {};
+    const paidBySplit = round2(
+      Number(paymentBreakup.cash || 0)
+      + Number(paymentBreakup.upi || 0)
+      + Number(paymentBreakup.card || 0)
+      + Number(paymentBreakup.net_banking || 0)
+      + Number(paymentBreakup.insurance || 0)
+      + Number(paymentBreakup.other || 0)
+    );
+    return { rows, subtotal, discountAmount, taxAmount, totalAmount, roundOffAmount, grandTotal, paidBySplit };
+  }, [form.items, form.applyRoundOff, form.paymentBreakup]);
 
   const handleCreate = async (e, options = {}) => {
     e.preventDefault();
@@ -699,6 +898,23 @@ export default function MedicineInvoices() {
     if (!form.items.length) return toast.error('Add at least one medicine item');
     if (form.items.some((i) => !i.medicationId || Number(i.quantity || 0) <= 0)) {
       return toast.error('Select medicine and valid quantity for all rows');
+    }
+    const restrictedWithoutDoctor = form.items.find((item) => {
+      const med = medications.find((m) => m.id === item.medicationId);
+      return Boolean(med?.isRestrictedDrug) && !String(item.prescriberDoctorName || '').trim();
+    });
+    if (restrictedWithoutDoctor) {
+      return toast.error('Doctor name is required for restricted (Schedule H) medicines');
+    }
+    const hasRestrictedItem = form.items.some((item) => {
+      const med = medications.find((m) => m.id === item.medicationId);
+      return Boolean(med?.isRestrictedDrug);
+    });
+    if (hasRestrictedItem && !form.patientId) {
+      return toast.error('Patient details are required for restricted (Schedule H) medicine sales');
+    }
+    if (form.paymentMode === 'other' && computed.paidBySplit > 0 && Math.abs(computed.paidBySplit - computed.grandTotal) > 0.5) {
+      return toast.error('Split payment total must match grand total');
     }
 
     setSaving(true);
@@ -708,6 +924,8 @@ export default function MedicineInvoices() {
         invoiceDate: form.invoiceDate,
         paymentMode: form.paymentMode,
         isPaid: form.isPaid,
+        applyRoundOff: Boolean(form.applyRoundOff),
+        paymentBreakup: form.paymentBreakup || {},
         notes: form.notes || null,
         items: form.items.map((it) => ({
           medicationId: it.medicationId,
@@ -715,6 +933,7 @@ export default function MedicineInvoices() {
           unitPrice: Number(it.unitPrice),
           discountPct: Number(it.discountPct || 0),
           taxPct: Number(it.taxPct || 0),
+          prescriberDoctorName: it.prescriberDoctorName || null,
         })),
       };
 
@@ -761,7 +980,7 @@ export default function MedicineInvoices() {
   }, [tab, saving, form, medications]);
 
   const resetQuickPatient = () => {
-    setQuickPatient({ name: '', phone: '', gender: '', dateOfBirth: '', bloodGroup: '' });
+    setQuickPatient({ name: '', phone: '', gender: '', dateOfBirth: '', bloodGroup: '', address: '', chronicConditions: [] });
   };
 
   const resetQuickMedicine = () => {
@@ -796,6 +1015,14 @@ export default function MedicineInvoices() {
         purchasePrice: Number(quickMedicine.purchasePrice || quickMedicine.unitPrice || 0),
         gstRate: Number(quickMedicine.gstRate || 0),
         hsnCode: quickMedicine.hsnCode || null,
+        scheduleCategory: quickMedicine.scheduleCategory || 'otc',
+        isRestrictedDrug: Boolean(quickMedicine.isRestrictedDrug),
+        interactsWith: String(quickMedicine.interactsWith || '')
+          .split(',')
+          .map((x) => x.trim())
+          .filter(Boolean),
+        location: quickMedicine.location || null,
+        reorderLevel: Number(quickMedicine.reorderLevel || 10),
         requiresPrescription: Boolean(quickMedicine.requiresPrescription),
         stockQuantity: 0,
       };
@@ -839,6 +1066,8 @@ export default function MedicineInvoices() {
         gender: quickPatient.gender || null,
         dateOfBirth: quickPatient.dateOfBirth || null,
         bloodGroup: quickPatient.bloodGroup || null,
+        address: quickPatient.address?.trim() || null,
+        chronicConditions: quickPatient.chronicConditions?.length ? quickPatient.chronicConditions : [],
       };
       const res = await patientAPI.create(payload);
       const created = res.data;
@@ -859,6 +1088,16 @@ export default function MedicineInvoices() {
     }
   };
 
+  const toggleQuickCondition = (condition) => {
+    setQuickPatient((prev) => {
+      const has = (prev.chronicConditions || []).includes(condition);
+      const next = has
+        ? (prev.chronicConditions || []).filter((c) => c !== condition)
+        : [...(prev.chronicConditions || []), condition];
+      return { ...prev, chronicConditions: next };
+    });
+  };
+
   const handleMarkPaid = async (id, isPaid) => {
     try {
       await medicineInvoiceAPI.markPaid(id, isPaid);
@@ -866,6 +1105,17 @@ export default function MedicineInvoices() {
       await Promise.all([loadInvoices(), loadAnalytics()]);
     } catch (err) {
       toast.error(err.response.data.message || 'Failed to update payment');
+    }
+  };
+
+  const handleDeliveryStatus = async (id, deliveryStatus) => {
+    try {
+      await medicineInvoiceAPI.updateDeliveryStatus(id, { deliveryStatus });
+      toast.success('Delivery status updated');
+      await Promise.all([loadInvoices(), loadAnalytics()]);
+      if (tab === 'delivery-dashboard') await loadDeliveryDashboard();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to update delivery status');
     }
   };
 
@@ -982,7 +1232,8 @@ export default function MedicineInvoices() {
     { key: 'invoiceDate', label: 'Date' },
     { key: 'patient', label: 'Patient', render: (v) => v?.name || 'Walk-in' },
     { key: 'paymentMode', label: 'Mode', render: (v) => (v || 'cash').replace(/_/g, ' ') },
-    { key: 'totalAmount', label: 'Amount', render: (v) => <strong>{currency(v)}</strong> },
+    { key: 'grandTotal', label: 'Amount', render: (_, row) => <strong>{currency(row.grandTotal || row.totalAmount)}</strong> },
+    { key: 'deliveryStatus', label: 'Delivery', render: (v) => (v || 'pending').replace(/_/g, ' ') },
     { key: 'isPaid', label: 'Payment', render: (v) => (
       <span style={{
         background:v ? '#dcfce7' : '#fee2e2',
@@ -992,6 +1243,15 @@ export default function MedicineInvoices() {
         {v ? 'Paid' : 'Unpaid'}
       </span>
     )},
+    { key: 'prescriptionStatus', label: 'Prescriptions', render: (_, row) => {
+      if (row.missingPrescriptionForRestricted) return (
+        <span style={{ background: '#fee2e2', color: '#b91c1c', padding: '3px 8px', borderRadius: 999, fontSize: 12, fontWeight: 700 }}>Missing</span>
+      );
+      if (Array.isArray(row.reports) && row.reports.length > 0) return (
+        <span style={{ background: '#ecfccb', color: '#15803d', padding: '3px 8px', borderRadius: 999, fontSize: 12, fontWeight: 700 }}>Uploaded</span>
+      );
+      return <span style={{ color: '#94a3b8' }}>—</span>;
+    }},
     {
       key: 'id', label: 'Actions', render: (_, row) => (
         <div className={styles.actions}>
@@ -1010,6 +1270,8 @@ export default function MedicineInvoices() {
             {row.isPaid ? 'Mark Unpaid' : 'Mark Paid'}
           </button>
           <button className={styles.btnWarning} onClick={() => openReturnModal(row)}>Return</button>
+          <button className={styles.btnSecondary} onClick={() => handleDeliveryStatus(row.id, 'out_for_delivery')}>Out for Delivery</button>
+          <button className={styles.btnSuccess} onClick={() => handleDeliveryStatus(row.id, 'delivered_paid')}>Delivered & Paid</button>
         </div>
       ),
     },
@@ -1019,6 +1281,13 @@ export default function MedicineInvoices() {
   const dayWise = analytics?.dayWise || [];
   const categoryWise = analytics?.categoryWise || [];
   const topMedicines = analytics?.topMedicines || [];
+  const deliverySummary = useMemo(() => {
+    const rows = deliveryRows || [];
+    const pending = rows.filter((x) => (x.deliveryStatus || 'pending') === 'pending').length;
+    const outForDelivery = rows.filter((x) => x.deliveryStatus === 'out_for_delivery').length;
+    const deliveredPaid = rows.filter((x) => x.deliveryStatus === 'delivered_paid').length;
+    return { total: rows.length, pending, outForDelivery, deliveredPaid };
+  }, [deliveryRows]);
 
   const gstSummary = gstReport?.summary || {
     totalInvoices: 0,
@@ -1266,6 +1535,9 @@ export default function MedicineInvoices() {
           ['list', 'Invoice Records'],
           ['analytics', 'Analytics'],
           ['gst-report', 'GST Report'],
+          ['schedule-h-log', 'Schedule-H Log'],
+          ['reminder-candidates', 'Reminder Candidates'],
+          ['delivery-dashboard', 'Delivery Dashboard'],
         ].map(([value, label]) => (
           <button
             key={value}
@@ -1281,8 +1553,34 @@ export default function MedicineInvoices() {
         <div className={styles.filterBar}>
           <input type="date" className={styles.filterSelect} value={from} onChange={(e) => setFrom(e.target.value)} />
           <input type="date" className={styles.filterSelect} value={to} onChange={(e) => setTo(e.target.value)} min={from || undefined} />
-          <button className={styles.btnSecondary} onClick={() => Promise.all([loadInvoices(), loadAnalytics()])}>Apply Range</button>
-          <button className={styles.btnSecondary} onClick={() => { setFrom(''); setTo(''); setTimeout(() => Promise.all([loadInvoices(), loadAnalytics()]), 0); }}>Reset</button>
+          <button
+            className={styles.btnSecondary}
+            onClick={() => {
+              const jobs = [loadInvoices(), loadAnalytics()];
+              if (tab === 'gst-report') jobs.push(loadGSTReport());
+              if (tab === 'schedule-h-log') jobs.push(loadScheduleHLog());
+              if (tab === 'delivery-dashboard') jobs.push(loadDeliveryDashboard());
+              Promise.all(jobs);
+            }}
+          >
+            Apply Range
+          </button>
+          <button
+            className={styles.btnSecondary}
+            onClick={() => {
+              setFrom('');
+              setTo('');
+              setTimeout(() => {
+                const jobs = [loadInvoices({ from: '', to: '' }), loadAnalytics()];
+                if (tab === 'gst-report') jobs.push(loadGSTReport());
+                if (tab === 'schedule-h-log') jobs.push(loadScheduleHLog());
+                if (tab === 'delivery-dashboard') jobs.push(loadDeliveryDashboard());
+                Promise.all(jobs);
+              }, 0);
+            }}
+          >
+            Reset
+          </button>
         </div>
       </div>
 
@@ -1435,14 +1733,15 @@ export default function MedicineInvoices() {
               </div>
               <div className={styles.field}>
                 <label className={styles.label}>Patient (Optional)</label>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <input
-                    className={styles.input}
-                    list="patient-options"
-                    placeholder="Search by name / patient ID / mobile"
-                    value={getPatientSearchText()}
-                    onChange={(e) => handlePatientSearch(e.target.value)}
-                  />
+                <div className={styles.inputRow}>
+                    <SearchableSelect
+                      className={`${styles.input} ${styles.inputFlex}`}
+                      options={patients.map((p) => ({ value: p.id, label: patientOptionLabel(p) }))}
+                      value={form.patientId || ''}
+                      onChange={(v) => setForm((p) => ({ ...p, patientId: v || '' }))}
+                      placeholder="Search patient by name / ID / mobile"
+                      emptyLabel="Walk-in customer"
+                    />
                   <button type="button" className={styles.btnSecondary} onClick={() => setPatientModalOpen(true)}>
                     + Add
                   </button>
@@ -1463,12 +1762,10 @@ export default function MedicineInvoices() {
                     {loadingPatientLastInvoice ? 'Loading...' : 'Repeat Last Basket'}
                   </button>
                 </div>
-                <datalist id="patient-options">
-                  <option value="">Walk-in customer</option>
-                  {patients.map((p) => (
-                    <option key={p.id} value={patientOptionLabel(p)} />
-                  ))}
-                </datalist>
+                {/* patient selector uses SearchableSelect; +Add opens modal to create new patient */}
+                <div style={{ marginTop: 6, fontSize: 12, color: '#92400e' }}>
+                  <strong>Note:</strong> Patient details are required when selling restricted (Schedule-H) medicines.
+                </div>
               </div>
               <div className={styles.field}>
                 <label className={styles.label}>Payment Mode</label>
@@ -1478,8 +1775,28 @@ export default function MedicineInvoices() {
                   <option value="card">Card</option>
                   <option value="net_banking">Net Banking</option>
                   <option value="insurance">Insurance</option>
-                  <option value="other">Other</option>
+                  <option value="other">Split / Other</option>
                 </select>
+              </div>
+            </div>
+
+            <div className={styles.card} style={{ padding: 12, marginBottom: 12, border: '1px solid #e2e8f0' }}>
+              <div style={{ fontWeight: 600, marginBottom: 8 }}>Barcode Scan (USB Scanner Supported)</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <input
+                  className={styles.input}
+                  placeholder="Scan barcode and press Enter"
+                  value={barcodeInput}
+                  onChange={(e) => setBarcodeInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleBarcodeAdd();
+                    }
+                  }}
+                  style={{ minWidth: 280 }}
+                />
+                <button type="button" className={styles.btnSecondary} onClick={handleBarcodeAdd}>Add by Barcode</button>
               </div>
             </div>
 
@@ -1487,6 +1804,10 @@ export default function MedicineInvoices() {
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#334155' }}>
                 <input type="checkbox" checked={form.isPaid} onChange={(e) => setForm((p) => ({ ...p, isPaid: e.target.checked }))} />
                 Mark as paid
+              </label>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#334155', marginLeft: 16 }}>
+                <input type="checkbox" checked={Boolean(form.applyRoundOff)} onChange={(e) => setForm((p) => ({ ...p, applyRoundOff: e.target.checked }))} />
+                Apply round-off to nearest rupee
               </label>
             </div>
 
@@ -1544,6 +1865,16 @@ export default function MedicineInvoices() {
                         )}
                       </div>
                     )}
+                    {Boolean(selMed?.isRestrictedDrug) && (
+                      <div style={{ marginTop: 6 }}>
+                        <input
+                          className={styles.input}
+                          placeholder="Prescriber Doctor Name (required for Schedule H)"
+                          value={item.prescriberDoctorName || ''}
+                          onChange={(e) => setItem(index, 'prescriberDoctorName', e.target.value)}
+                        />
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1558,6 +1889,23 @@ export default function MedicineInvoices() {
                 </button>
               </div>
             </div>
+
+            {(checkingInteractions || interactionWarnings.length > 0) && (
+              <div className={styles.card} style={{ padding: 12, marginBottom: 12, border: '1px solid #fecaca', background: '#fff7ed' }}>
+                <div style={{ fontWeight: 700, color: '#b45309', marginBottom: 6 }}>
+                  Drug Interaction Warning {checkingInteractions ? '(checking...)' : ''}
+                </div>
+                {interactionWarnings.length === 0 ? (
+                  <div style={{ fontSize: 13, color: '#9a3412' }}>No high-risk interaction detected for selected basket.</div>
+                ) : (
+                  interactionWarnings.map((w, idx) => (
+                    <div key={`${w.medicationA?.id}-${w.medicationB?.id}-${idx}`} style={{ fontSize: 13, color: '#9a3412' }}>
+                      {w.message}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
 
             <div className={styles.card} style={{ padding: 12, marginBottom: 16, border: '1px solid #e2e8f0' }}>
               <div style={{ fontWeight: 600, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1628,6 +1976,41 @@ export default function MedicineInvoices() {
                 <div>Discount: <strong>{currency(computed.discountAmount)}</strong></div>
                 <div>GST (Tax): <strong>{currency(computed.taxAmount)}</strong></div>
                 <div>Total: <strong>{currency(computed.totalAmount)}</strong></div>
+                <div>Round-off: <strong>{currency(computed.roundOffAmount)}</strong></div>
+                <div>Grand Total: <strong>{currency(computed.grandTotal)}</strong></div>
+                <div>Split Paid: <strong>{currency(computed.paidBySplit)}</strong></div>
+                <div style={{ color: Math.abs(computed.paidBySplit - computed.grandTotal) > 0.5 && form.paymentMode === 'other' ? '#b91c1c' : '#15803d' }}>
+                  Balance: <strong>{currency(computed.grandTotal - computed.paidBySplit)}</strong>
+                </div>
+              </div>
+              <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(3, minmax(120px, 1fr))', gap: 8 }}>
+                <input
+                  className={styles.input}
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Cash"
+                  value={form.paymentBreakup?.cash ?? 0}
+                  onChange={(e) => setForm((p) => ({ ...p, paymentBreakup: { ...(p.paymentBreakup || {}), cash: e.target.value } }))}
+                />
+                <input
+                  className={styles.input}
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="UPI"
+                  value={form.paymentBreakup?.upi ?? 0}
+                  onChange={(e) => setForm((p) => ({ ...p, paymentBreakup: { ...(p.paymentBreakup || {}), upi: e.target.value } }))}
+                />
+                <input
+                  className={styles.input}
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Card"
+                  value={form.paymentBreakup?.card ?? 0}
+                  onChange={(e) => setForm((p) => ({ ...p, paymentBreakup: { ...(p.paymentBreakup || {}), card: e.target.value } }))}
+                />
               </div>
             </div>
 
@@ -2058,6 +2441,261 @@ export default function MedicineInvoices() {
         </div>
       )}
 
+      {tab === 'schedule-h-log' && (
+        <div className={styles.card} style={{ padding: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+            <div>
+              <h3 style={{ margin: 0, color: '#334155' }}>Schedule-H Dispense Register</h3>
+              <div style={{ fontSize: 12, color: '#64748b' }}>Restricted drug sales with prescriber details</div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button className={styles.btnSecondary} onClick={loadScheduleHLog} disabled={scheduleHLoading}>
+                {scheduleHLoading ? 'Loading...' : 'Refresh'}
+              </button>
+              <button
+                className={styles.btnPrimary}
+                onClick={async () => {
+                  try {
+                    const doApply = window.confirm('Run backfill and apply matches? Click Cancel to do a dry-run.');
+                    const body = { apply: doApply };
+                    const res = await medicineInvoiceAPI.backfillPrescriptions(body);
+                    const result = res.data || res;
+                    toast.success(`Backfill: total=${result.total} matched=${result.matched} updated=${result.updated} unmatched=${result.unmatched}`);
+                    // Refresh the schedule-H log to show linked reports
+                    loadScheduleHLog();
+                  } catch (err) {
+                    toast.error(err.response?.data?.message || 'Backfill failed');
+                  }
+                }}
+                disabled={scheduleHLoading}
+                title="Best-effort match prescriptions to invoices (dry-run if cancelled)"
+              >
+                Backfill Prescriptions
+              </button>
+            </div>
+          </div>
+
+          {scheduleHLoading ? (
+            <div style={{ textAlign: 'center', padding: 20, color: '#64748b' }}>Loading Schedule-H log...</div>
+          ) : scheduleHLog.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 20, color: '#94a3b8' }}>No restricted-drug sale found for selected filters.</div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: '#f8fafc' }}>
+                    {['Date', 'Invoice', 'Patient', 'Medicine', 'Qty', 'Doctor Name', 'Prescriptions', 'Actions'].map((h) => (
+                      <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: '#64748b', borderBottom: '1px solid #e2e8f0' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {scheduleHLog.map((row, idx) => (
+                    <tr key={`${row.invoiceId}-${row.medication?.id}-${idx}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '8px 10px' }}>{row.invoiceDate || '-'}</td>
+                      <td style={{ padding: '8px 10px', fontFamily: 'monospace' }}>{row.invoiceNumber || '-'}</td>
+                      <td style={{ padding: '8px 10px' }}>{row.patient?.name || 'Walk-in'}</td>
+                      <td style={{ padding: '8px 10px' }}>{row.medication?.name || '-'}</td>
+                      <td style={{ padding: '8px 10px' }}>{row.quantity}</td>
+                      <td style={{ padding: '8px 10px', color: row.prescriberDoctorName ? '#1e293b' : '#b91c1c', fontWeight: 600 }}>
+                        {row.prescriberDoctorName || 'Missing'}
+                      </td>
+                      <td style={{ padding: '8px 10px' }}>
+                        {Array.isArray(row.reports) && row.reports.length > 0 ? (
+                          <div style={{ fontSize: 13 }}>
+                            {row.reports.map((r) => (
+                              <div key={r.id}><a href={`/api/reports/${r.id}/view`} target="_blank" rel="noreferrer">{r.originalName || r.title || 'Prescription'}</a></div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div style={{ color: '#94a3b8' }}>No prescription</div>
+                        )}
+                      </td>
+                      <td style={{ padding: '8px 10px' }}>
+                        <button className={styles.btnSecondary} onClick={() => openView(row)}>View</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {/* View modal for Schedule-H row */}
+          <Modal isOpen={viewModalOpen} onClose={closeView} title="Schedule-H — Details">
+            <div style={{ maxHeight: 480, overflowY: 'auto' }}>
+              <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 260 }}>
+                  <h4 style={{ margin: '0 0 8px 0' }}>Patient</h4>
+                  {viewPatient ? (
+                    <div style={{ fontSize: 13 }}>
+                      <div><strong>Name:</strong> {viewPatient.name}</div>
+                      <div><strong>Patient ID:</strong> {viewPatient.patientId || '-'}</div>
+                      <div><strong>Phone:</strong> {viewPatient.phone || '-'}</div>
+                      <div><strong>DOB:</strong> {viewPatient.dateOfBirth || '-'}</div>
+                      <div><strong>Gender:</strong> {viewPatient.gender || '-'}</div>
+                      <div><strong>Address:</strong> {viewPatient.address || '-'}</div>
+                      <div><strong>Allergies:</strong> {viewPatient.allergies || '-'}</div>
+                      <div><strong>Medical History:</strong> {viewPatient.medicalHistory || '-'}</div>
+                    </div>
+                  ) : (
+                    <div style={{ color: '#64748b' }}>No patient details available</div>
+                  )}
+                </div>
+                <div style={{ flex: 1, minWidth: 260 }}>
+                  <h4 style={{ margin: '0 0 8px 0' }}>Record</h4>
+                  <div style={{ fontSize: 13 }}>
+                    <div><strong>Invoice:</strong> {viewRow?.invoiceNumber || viewRow?.invoiceId || '-'}</div>
+                    <div><strong>Date:</strong> {viewRow?.invoiceDate || '-'}</div>
+                    <div><strong>Medicine:</strong> {viewRow?.medication?.name || '-'}</div>
+                    <div><strong>Qty:</strong> {viewRow?.quantity || '-'}</div>
+                    <div><strong>Doctor:</strong> {viewRow?.prescriberDoctorName || 'Missing'}</div>
+                    <div><strong>Hospital:</strong> {viewRow?.hospital?.name || '-'}</div>
+                  </div>
+                  <div style={{ marginTop: 12 }}>
+                    <form onSubmit={handleUpload}>
+                      <div style={{ marginBottom: 8 }}>
+                        <input type="file" accept="application/pdf,image/*" onChange={handleFileChange} />
+                      </div>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button type="button" className={styles.btnSecondary} onClick={() => setSelectedFile(null)} disabled={uploading}>Clear</button>
+                        <button type="submit" className={styles.btnPrimary} disabled={uploading}>{uploading ? 'Uploading...' : 'Upload Prescription'}</button>
+                      </div>
+                    </form>
+                    {uploadedReport && (
+                      <div style={{ marginTop: 10 }}>
+                        <a href={`/api/reports/${uploadedReport.id}/view`} target="_blank" rel="noreferrer">View uploaded prescription</a>
+                      </div>
+                    )}
+                    {patientReports && patientReports.length > 0 && (
+                      <div style={{ marginTop: 12 }}>
+                        <div style={{ fontWeight: 700, marginBottom: 6 }}>Existing Prescriptions</div>
+                        <ul style={{ margin: 0, paddingLeft: 16 }}>
+                          {patientReports.map((r) => (
+                            <li key={r.id} style={{ marginBottom: 6, fontSize: 13 }}>
+                              <a href={`/api/reports/${r.id}/view`} target="_blank" rel="noreferrer">{r.originalName || r.title || 'Prescription'}</a>
+                              <div style={{ color: '#64748b', fontSize: 12 }}>{new Date(r.createdAt).toLocaleString()}</div>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Modal>
+        </div>
+      )}
+
+      {tab === 'reminder-candidates' && (
+        <div className={styles.card} style={{ padding: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+            <div>
+              <h3 style={{ margin: 0, color: '#334155' }}>Refill Reminder Candidates</h3>
+              <div style={{ fontSize: 12, color: '#64748b' }}>Chronic patients eligible for monthly refill follow-up</div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                className={styles.input}
+                type="number"
+                min="1"
+                max="120"
+                value={reminderDays}
+                onChange={(e) => setReminderDays(Number(e.target.value || 25))}
+                style={{ width: 110 }}
+              />
+              <button className={styles.btnSecondary} onClick={() => loadReminderCandidates(reminderDays)} disabled={reminderLoading}>
+                {reminderLoading ? 'Loading...' : 'Load'}
+              </button>
+            </div>
+          </div>
+
+          {reminderLoading ? (
+            <div style={{ textAlign: 'center', padding: 20, color: '#64748b' }}>Loading reminder candidates...</div>
+          ) : reminderCandidates.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 20, color: '#94a3b8' }}>No reminder candidates found.</div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: '#f8fafc' }}>
+                    {['Patient', 'Phone', 'Conditions', 'Last Invoice', 'Days Since', 'Suggested Message'].map((h) => (
+                      <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: '#64748b', borderBottom: '1px solid #e2e8f0' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {reminderCandidates.map((row) => (
+                    <tr key={row.patientId} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '8px 10px', fontWeight: 600 }}>{row.patientName}</td>
+                      <td style={{ padding: '8px 10px' }}>{row.phone || '-'}</td>
+                      <td style={{ padding: '8px 10px' }}>{(row.chronicConditions || []).join(', ') || '-'}</td>
+                      <td style={{ padding: '8px 10px' }}>{row.lastInvoiceDate || '-'}</td>
+                      <td style={{ padding: '8px 10px' }}>{row.daysSinceLastInvoice}</td>
+                      <td style={{ padding: '8px 10px', color: '#334155' }}>{row.suggestedMessage}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'delivery-dashboard' && (
+        <div style={{ display: 'grid', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+            {[
+              { label: 'Total', value: deliverySummary.total, color: '#334155' },
+              { label: 'Pending', value: deliverySummary.pending, color: '#b45309' },
+              { label: 'Out for Delivery', value: deliverySummary.outForDelivery, color: '#1d4ed8' },
+              { label: 'Delivered & Paid', value: deliverySummary.deliveredPaid, color: '#15803d' },
+            ].map((c) => (
+              <div key={c.label} className={styles.card} style={{ padding: 12 }}>
+                <div style={{ fontSize: 12, color: '#64748b' }}>{c.label}</div>
+                <div style={{ fontSize: 22, fontWeight: 700, color: c.color }}>{c.value}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className={styles.card} style={{ padding: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <h3 style={{ margin: 0, color: '#334155' }}>Home Delivery Tracking</h3>
+              <button className={styles.btnSecondary} onClick={loadDeliveryDashboard} disabled={deliveryLoading}>
+                {deliveryLoading ? 'Loading...' : 'Refresh'}
+              </button>
+            </div>
+            {deliveryLoading ? (
+              <div style={{ textAlign: 'center', padding: 20, color: '#64748b' }}>Loading deliveries...</div>
+            ) : (
+              <Table
+                loading={false}
+                data={deliveryRows}
+                emptyMessage="No delivery records found"
+                columns={[
+                  { key: 'invoiceDate', label: 'Date' },
+                  { key: 'invoiceNumber', label: 'Invoice' },
+                  { key: 'patient', label: 'Patient', render: (v) => v?.name || 'Walk-in' },
+                  { key: 'grandTotal', label: 'Amount', render: (_, row) => currency(row.grandTotal || row.totalAmount) },
+                  { key: 'deliveryStatus', label: 'Delivery', render: (v) => (v || 'pending').replace(/_/g, ' ') },
+                  {
+                    key: 'id',
+                    label: 'Actions',
+                    render: (_, row) => (
+                      <div className={styles.actions}>
+                        <button className={styles.btnSecondary} onClick={() => handleDeliveryStatus(row.id, 'pending')}>Pending</button>
+                        <button className={styles.btnSecondary} onClick={() => handleDeliveryStatus(row.id, 'out_for_delivery')}>Out</button>
+                        <button className={styles.btnSuccess} onClick={() => handleDeliveryStatus(row.id, 'delivered_paid')}>Delivered</button>
+                      </div>
+                    ),
+                  },
+                ]}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
       <Modal
         isOpen={patientModalOpen}
         onClose={() => {
@@ -2120,6 +2758,42 @@ export default function MedicineInvoices() {
                   <option key={bg} value={bg}>{bg}</option>
                 ))}
               </select>
+            </div>
+            <div className={styles.field} style={{ gridColumn: 'span 2' }}>
+              <label className={styles.label}>Address</label>
+              <textarea
+                className={styles.input}
+                value={quickPatient.address}
+                onChange={(e) => setQuickPatient((p) => ({ ...p, address: e.target.value }))}
+                rows={2}
+                placeholder="Street, locality, city..."
+              />
+            </div>
+            <div className={styles.field} style={{ gridColumn: 'span 2' }}>
+              <label className={styles.label}>Chronic Conditions</label>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {CHRONIC_CONDITIONS.map((condition) => {
+                  const active = (quickPatient.chronicConditions || []).includes(condition);
+                  return (
+                    <button
+                      key={condition}
+                      type="button"
+                      onClick={() => toggleQuickCondition(condition)}
+                      style={{
+                        border: `1px solid ${active ? '#1d4ed8' : '#cbd5e1'}`,
+                        color: active ? '#1d4ed8' : '#475569',
+                        background: active ? '#dbeafe' : '#fff',
+                        borderRadius: 999,
+                        padding: '4px 12px',
+                        fontSize: 12,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {condition}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
           <div className={styles.formActions}>
@@ -2228,6 +2902,58 @@ export default function MedicineInvoices() {
                 value={quickMedicine.hsnCode}
                 onChange={(e) => setQuickMedicine((m) => ({ ...m, hsnCode: e.target.value }))}
               />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label}>Schedule Category</label>
+              <select
+                className={styles.input}
+                value={quickMedicine.scheduleCategory}
+                onChange={(e) => setQuickMedicine((m) => ({ ...m, scheduleCategory: e.target.value }))}
+              >
+                <option value="otc">OTC</option>
+                <option value="schedule_h">Schedule H</option>
+                <option value="schedule_h1">Schedule H1</option>
+                <option value="schedule_x">Schedule X</option>
+              </select>
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label}>Shelf / Location</label>
+              <input
+                className={styles.input}
+                value={quickMedicine.location}
+                onChange={(e) => setQuickMedicine((m) => ({ ...m, location: e.target.value }))}
+                placeholder="e.g. Shelf A, Box 4"
+              />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label}>Reorder Level</label>
+              <input
+                className={styles.input}
+                type="number"
+                min="0"
+                step="1"
+                value={quickMedicine.reorderLevel}
+                onChange={(e) => setQuickMedicine((m) => ({ ...m, reorderLevel: e.target.value }))}
+              />
+            </div>
+            <div className={styles.field} style={{ gridColumn: 'span 2' }}>
+              <label className={styles.label}>Interaction Alerts (comma separated medicine names)</label>
+              <input
+                className={styles.input}
+                value={quickMedicine.interactsWith}
+                onChange={(e) => setQuickMedicine((m) => ({ ...m, interactsWith: e.target.value }))}
+                placeholder="e.g. Warfarin, Aspirin"
+              />
+            </div>
+            <div className={styles.field} style={{ gridColumn: 'span 2' }}>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#334155' }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(quickMedicine.isRestrictedDrug)}
+                  onChange={(e) => setQuickMedicine((m) => ({ ...m, isRestrictedDrug: e.target.checked }))}
+                />
+                Restricted drug (Schedule H log required)
+              </label>
             </div>
             <div className={styles.field} style={{ gridColumn: 'span 2' }}>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#334155' }}>

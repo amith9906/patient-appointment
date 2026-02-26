@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { otAPI, patientAPI, doctorAPI, ipdAPI } from '../services/api';
 import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
 import SearchableSelect from '../components/SearchableSelect';
 import PaginationControls from '../components/PaginationControls';
 import styles from './Page.module.css';
+import useDebouncedFilters from '../hooks/useDebouncedFilters';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -17,13 +18,13 @@ const STATUS_STYLE = {
 };
 
 const INIT_BOOK_FORM = {
-  patientId: '', surgeonId: '', procedureName: '', scheduledDate: today(),
+  patientId: '', surgeonId: '', procedureName: '', surgeryType: '', scheduledDate: today(),
   scheduledTime: '09:00', estimatedDuration: 60, otRoom: '',
   anesthesiaType: 'none', admissionId: '', preOpNotes: '',
 };
 
 const INIT_EDIT_FORM = {
-  status: 'scheduled', scheduledDate: '', scheduledTime: '',
+  status: 'scheduled', surgeryType: '', scheduledDate: '', scheduledTime: '',
   estimatedDuration: 60, otRoom: '', anesthesiaType: 'none',
   preOpNotes: '', postOpNotes: '', outcome: '',
   actualStartTime: '', actualEndTime: '',
@@ -37,9 +38,14 @@ export default function OT() {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ scheduledToday: 0, inProgress: 0, completedThisMonth: 0, cancelledThisMonth: 0 });
   const [filters, setFilters] = useState({ status: '', date: '', surgeonId: '' });
+  const { filtersRef, debouncedFilters } = useDebouncedFilters(filters, 400);
   const [schedulePage, setSchedulePage] = useState(1);
   const [schedulePerPage, setSchedulePerPage] = useState(25);
   const [schedulePagination, setSchedulePagination] = useState(null);
+  const schedulePageRef = useRef(schedulePage);
+  const schedulePerPageRef = useRef(schedulePerPage);
+  useEffect(() => { schedulePageRef.current = schedulePage; }, [schedulePage]);
+  useEffect(() => { schedulePerPageRef.current = schedulePerPage; }, [schedulePerPage]);
   const [expandedId, setExpandedId] = useState(null);
 
   const [doctors, setDoctors] = useState([]);
@@ -60,15 +66,16 @@ export default function OT() {
     otAPI.getStats().then(r => setStats(r.data || {})).catch(() => {});
   };
 
-  const loadSchedules = useCallback((f = filters) => {
+  const loadSchedules = useCallback((f) => {
     setLoading(true);
     const params = {
-      page: schedulePage,
-      per_page: schedulePerPage,
+      page: schedulePageRef.current,
+      per_page: schedulePerPageRef.current,
     };
-    if (f.status) params.status = f.status;
-    if (f.date) params.date = f.date;
-    if (f.surgeonId) params.surgeonId = f.surgeonId;
+    const applied = f || filtersRef.current;
+    if (applied?.status) params.status = applied.status;
+    if (applied?.date) params.date = applied.date;
+    if (applied?.surgeonId) params.surgeonId = applied.surgeonId;
     otAPI.getAll(params)
       .then((r) => {
         setSchedules(r.data || []);
@@ -76,7 +83,7 @@ export default function OT() {
       })
       .catch(() => toast.error('Failed to load OT schedules'))
       .finally(() => setLoading(false));
-  }, [filters.status, filters.date, filters.surgeonId, schedulePage, schedulePerPage]);
+  }, []);
 
   useEffect(() => {
     loadSchedules();
@@ -88,9 +95,17 @@ export default function OT() {
     ipdAPI.getAdmissions({ status: 'admitted' }).then((r) => setAdmissions(r.data || [])).catch(() => {});
   }, [loadSchedules]);
 
+  // Reload when page/perPage changes (pagination controls)
+  useEffect(() => {
+    loadSchedules();
+  }, [loadSchedules, schedulePage, schedulePerPage]);
+
+  // When debounced filters change: reset to page 1 and reload
   useEffect(() => {
     setSchedulePage(1);
-  }, [filters.status, filters.date, filters.surgeonId]);
+    schedulePageRef.current = 1;
+    loadSchedules(debouncedFilters);
+  }, [debouncedFilters.status, debouncedFilters.date, debouncedFilters.surgeonId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleBook = async (e) => {
     e.preventDefault();
@@ -116,6 +131,7 @@ export default function OT() {
     setEditTarget(s);
     setEditForm({
       status: s.status,
+      surgeryType: s.surgeryType || '',
       scheduledDate: s.scheduledDate,
       scheduledTime: s.scheduledTime,
       estimatedDuration: s.estimatedDuration,
@@ -289,7 +305,7 @@ export default function OT() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
                   <thead style={{ background: '#f8fafc' }}>
                     <tr>
-                      {['OT #', 'Patient', 'Surgeon', 'Procedure', 'Date', 'Time', 'Duration', 'OT Room', 'Anesthesia', 'Status', 'Actions'].map(h => (
+                      {['OT #', 'Patient', 'Surgeon', 'Procedure', 'Type', 'Date', 'Time', 'Duration', 'OT Room', 'Anesthesia', 'Status', 'Actions'].map(h => (
                         <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontSize: 12, fontWeight: 700, color: '#475569', textTransform: 'uppercase', whiteSpace: 'nowrap', borderBottom: '2px solid #e2e8f0' }}>{h}</th>
                       ))}
                     </tr>
@@ -302,6 +318,7 @@ export default function OT() {
                           <td style={{ padding: '10px 14px' }}>{s.patient?.name || '—'}</td>
                           <td style={{ padding: '10px 14px' }}>Dr. {s.surgeon?.name || '—'}</td>
                           <td style={{ padding: '10px 14px', fontWeight: 500 }}>{s.procedureName}</td>
+                          <td style={{ padding: '10px 14px', fontSize: 13, color: '#64748b' }}>{s.surgeryType || '—'}</td>
                           <td style={{ padding: '10px 14px', whiteSpace: 'nowrap' }}>{s.scheduledDate}</td>
                           <td style={{ padding: '10px 14px', whiteSpace: 'nowrap' }}>{s.scheduledTime}</td>
                           <td style={{ padding: '10px 14px' }}>{s.estimatedDuration} min</td>
@@ -417,6 +434,12 @@ export default function OT() {
               <input className={styles.input} value={bookForm.procedureName} required
                 onChange={e => setBookForm(f => ({ ...f, procedureName: e.target.value }))}
                 placeholder="e.g., Appendectomy, Cholecystectomy..." />
+            </div>
+            <div>
+              <label className={styles.label}>Surgery Type</label>
+              <input className={styles.input} value={bookForm.surgeryType}
+                onChange={e => setBookForm(f => ({ ...f, surgeryType: e.target.value }))}
+                placeholder="e.g., Elective, Emergency, Minor, Major..." />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
               <div>
@@ -557,6 +580,11 @@ export default function OT() {
                   <label className={styles.label}>OT Room</label>
                   <input className={styles.input} value={editForm.otRoom}
                     onChange={e => setEditForm(f => ({ ...f, otRoom: e.target.value }))} />
+                </div>
+                <div>
+                  <label className={styles.label}>Surgery Type</label>
+                  <input className={styles.input} value={editForm.surgeryType}
+                    onChange={e => setEditForm(f => ({ ...f, surgeryType: e.target.value }))} />
                 </div>
                 <div>
                   <label className={styles.label}>Date</label>

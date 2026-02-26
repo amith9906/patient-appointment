@@ -7,6 +7,8 @@ router.use(authenticate);
 router.get('/me', authorize('doctor'), c.getMe);
 router.get('/me/appointments', authorize('doctor'), c.getMyAppointments);
 router.get('/me/patients', authorize('doctor'), c.getMyPatients);
+router.get('/department/stats', authorize('doctor', 'admin', 'super_admin'), c.getDepartmentStats);
+router.get('/department/doctors', authorize('doctor', 'admin', 'super_admin'), c.getDepartmentDoctors);
 router.get('/availability/summary', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.getAvailabilitySummary);
 router.get('/available-on', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.getAvailableOnDate);
 // General routes

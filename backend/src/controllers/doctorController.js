@@ -1,6 +1,6 @@
-const { Doctor, Hospital, Department, Appointment, Patient, DoctorAvailability, DoctorLeave } = require('../models');
+const { Doctor, Hospital, Department, Appointment, Patient, DoctorAvailability, DoctorLeave, IPDAdmission, Vitals, MedicationAdministration } = require('../models');
 const { Op } = require('sequelize');
-const { ensureScopedHospital, isSuperAdmin } = require('../utils/accessScope');
+const { ensureScopedHospital, isSuperAdmin, getHODDepartmentId } = require('../utils/accessScope');
 const {
   DAY_NAMES,
   toMinutes,
@@ -252,9 +252,10 @@ exports.getAvailabilitySummary = async (req, res) => {
     const leaveWhere = {};
     if (targetHospital) leaveWhere.hospitalId = targetHospital;
     const todayDate = new Date().toISOString().split('T')[0];
-    const totalLeaves = await DoctorLeave.count({ where: leaveWhere });
-    const leavesToday = await DoctorLeave.count({ where: { ...leaveWhere, leaveDate: todayDate } });
-    const upcomingLeaves = await DoctorLeave.count({ where: { ...leaveWhere, leaveDate: { [Op.gte]: todayDate } } });
+    const approvedLeaveWhere = { ...leaveWhere, status: 'approved' };
+    const totalLeaves = await DoctorLeave.count({ where: approvedLeaveWhere });
+    const leavesToday = await DoctorLeave.count({ where: { ...approvedLeaveWhere, leaveDate: todayDate } });
+    const upcomingLeaves = await DoctorLeave.count({ where: { ...approvedLeaveWhere, leaveDate: { [Op.gte]: todayDate } } });
 
     res.json({
       doctorCount,
@@ -293,7 +294,7 @@ exports.getAvailableOnDate = async (req, res) => {
     // Remove any doctor with a full-day leave on this date
     if (availableIds.size > 0) {
       const fullDayLeaves = await DoctorLeave.findAll({
-        where: { doctorId: Array.from(availableIds), leaveDate: date, isFullDay: true },
+        where: { doctorId: Array.from(availableIds), leaveDate: date, isFullDay: true, status: 'approved' },
         attributes: ['doctorId'],
         raw: true,
       });
@@ -387,6 +388,144 @@ exports.getAvailableSlots = async (req, res) => {
     const schedules = ensureScheduleForDay(doctor, dayOfWeek, dbSchedules);
     if (!schedules.length) return res.json([]);
     const slots = buildSlotsFromSchedules(schedules, bookedTimes);
+
+    const leave = await DoctorLeave.findOne({
+      where: { doctorId: doctor.id, leaveDate: date, status: 'approved' },
+      attributes: ['isFullDay', 'startTime', 'endTime'],
+    });
+    if (!leave) return res.json(slots);
+
+    // Reflect approved leave directly in slot availability so UI blocks invalid times.
+    if (leave.isFullDay) {
+      return res.json(slots.map((slot) => ({ ...slot, available: false })));
+    }
+    if (leave.startTime && leave.endTime) {
+      const leaveStart = toMinutes(String(leave.startTime).slice(0, 5));
+      const leaveEnd = toMinutes(String(leave.endTime).slice(0, 5));
+      const adjusted = slots.map((slot) => {
+        const slotMinutes = toMinutes(String(slot.time || '').slice(0, 5));
+        if (slotMinutes >= leaveStart && slotMinutes < leaveEnd) {
+          return { ...slot, available: false };
+        }
+        return slot;
+      });
+      return res.json(adjusted);
+    }
     res.json(slots);
   } catch (err) { res.status(500).json({ message: err.message }); }
+};
+
+exports.getDepartmentDoctors = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+
+    const departmentId = await getHODDepartmentId(req.user);
+    if (!departmentId && !isSuperAdmin(req.user)) {
+      return res.status(403).json({ message: 'Only HODs can access department-wide data' });
+    }
+
+    const where = { isActive: true };
+    if (!isSuperAdmin(req.user)) {
+      where.departmentId = departmentId;
+      where.hospitalId = scope.hospitalId;
+    } else if (req.query.departmentId) {
+      where.departmentId = req.query.departmentId;
+    }
+
+    const doctors = await Doctor.findAll({
+      where,
+      include: [
+        { model: Department, as: 'department', attributes: ['name'] },
+        { model: Hospital, as: 'hospital', attributes: ['name'] },
+      ],
+      order: [['name', 'ASC']],
+    });
+
+    res.json(doctors);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.getDepartmentStats = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+
+    let departmentId = req.query.departmentId;
+    if (!isSuperAdmin(req.user)) {
+      departmentId = await getHODDepartmentId(req.user);
+    }
+
+    if (!departmentId) {
+      return res.status(403).json({ message: 'Department scope required' });
+    }
+
+    const doctors = await Doctor.findAll({
+      where: { departmentId, isActive: true },
+      attributes: ['id', 'name', 'specialization'],
+    });
+
+    const docIds = doctors.map(d => d.id);
+
+    const [appointments, admissions, vitalsCount, medicationAdminCount] = await Promise.all([
+      Appointment.findAll({
+        where: { doctorId: docIds, status: 'completed' },
+        attributes: ['doctorId'],
+      }),
+      IPDAdmission.findAll({
+        where: { doctorId: docIds },
+        attributes: ['id', 'doctorId', 'status'],
+      }),
+      Vitals.count({
+        where: { admissionId: { [Op.not]: null } },
+        include: [{ 
+          model: IPDAdmission, 
+          as: 'admission', 
+          where: { doctorId: docIds } 
+        }]
+      }),
+      MedicationAdministration.count({
+        include: [{ 
+          model: IPDAdmission, 
+          as: 'admission', 
+          where: { doctorId: docIds } 
+        }]
+      }),
+    ]);
+
+    const stats = doctors.map(doc => {
+      const docAppts = appointments.filter(a => a.doctorId === doc.id).length;
+      const docIPD = admissions.filter(a => a.doctorId === doc.id);
+      const activeIPD = docIPD.filter(a => a.status === 'admitted').length;
+      const totalIPD = docIPD.length;
+
+      return {
+        id: doc.id,
+        name: doc.name,
+        specialization: doc.specialization,
+        totalAppointments: docAppts,
+        activeAdmissions: activeIPD,
+        totalAdmissions: totalIPD,
+      };
+    });
+
+    res.json({
+      departmentId,
+      docCount: doctors.length,
+      performance: stats,
+      summary: {
+        totalAppointments: appointments.length,
+        totalActiveAdmissions: admissions.filter(a => a.status === 'admitted').length,
+      },
+      audit: {
+        vitalsCount,
+        medicationAdminCount,
+        complianceScore: Math.round((vitalsCount + medicationAdminCount) / (admissions.length || 1) * 10) / 10
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };

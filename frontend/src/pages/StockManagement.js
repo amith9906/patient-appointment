@@ -33,11 +33,21 @@ const NEW_MED_INIT = {
   purchasePrice: 0,
   gstRate: 0,
   hsnCode: '',
+  location: '',
+  reorderLevel: 10,
   requiresPrescription: true,
   hospitalId: '',
 };
 
 const currency = (v) => `Rs ${Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+
+const getDaysToExpiry = (expiryDate) => {
+  if (!expiryDate) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const exp = new Date(`${expiryDate}T00:00:00`);
+  return Math.floor((exp - today) / (1000 * 60 * 60 * 24));
+};
 
 export default function StockManagement() {
   const [medications, setMedications] = useState([]);
@@ -200,6 +210,8 @@ export default function StockManagement() {
         purchasePrice: Number(newMedForm.purchasePrice || 0),
         gstRate: Number(newMedForm.gstRate || 0),
         hsnCode: newMedForm.hsnCode || null,
+        location: newMedForm.location || null,
+        reorderLevel: Number(newMedForm.reorderLevel || 10),
         requiresPrescription: Boolean(newMedForm.requiresPrescription),
         stockQuantity: 0,
         ...(isSuperAdmin ? { hospitalId: newMedForm.hospitalId } : {}),
@@ -349,7 +361,7 @@ export default function StockManagement() {
     }
   };
 
-  const lowStock = medications.filter((m) => Number(m.stockQuantity || 0) < 10);
+  const lowStock = medications.filter((m) => Number(m.stockQuantity || 0) < Number(m.reorderLevel || 10));
   const totalValue = medications.reduce((s, m) => s + (Number(m.stockQuantity || 0) * Number(m.unitPrice || 0)), 0);
   const inventoryTotal = medPagination?.total ?? medications.length;
   const purchaseTotal = purchasePagination?.total ?? purchases.length;
@@ -363,6 +375,8 @@ export default function StockManagement() {
         { label: 'Generic Name', key: 'genericName' },
         { label: 'Category', key: 'category' },
         { label: 'Dosage', key: 'dosage' },
+        { label: 'Location', key: 'location' },
+        { label: 'Reorder Level', key: (r) => Number(r.reorderLevel || 10) },
         { label: 'Stock Qty', key: 'stockQuantity' },
         { label: 'Unit Price (Rs)', key: 'unitPrice' },
         { label: 'Purchase Price (Rs)', key: 'purchasePrice' },
@@ -412,15 +426,29 @@ export default function StockManagement() {
     {
       key: 'stockQuantity',
       label: 'Stock',
-      render: (v) => (
-        <span style={{ fontWeight: 700, fontSize: 15, color: v < 10 ? '#dc2626' : v < 50 ? '#d97706' : '#16a34a' }}>
-          {v}
+      render: (v, r) => (
+        <span style={{ fontWeight: 700, fontSize: 15, color: Number(v || 0) < Number(r.reorderLevel || 10) ? '#dc2626' : '#16a34a' }}>
+          {v} <span style={{ fontSize: 11, color: '#94a3b8' }}>(reorder {Number(r.reorderLevel || 10)})</span>
         </span>
       ),
     },
+    { key: 'location', label: 'Location', render: (v) => v || '-' },
     { key: 'unitPrice', label: 'Unit Price', render: (v) => currency(v) },
     { key: 'stockQuantity', label: 'Stock Value', render: (v, r) => currency(Number(v || 0) * Number(r.unitPrice || 0)) },
-    { key: 'expiryDate', label: 'Expiry', render: (v) => v || '-' },
+    {
+      key: 'expiryDate',
+      label: 'Expiry',
+      render: (v) => {
+        const days = getDaysToExpiry(v);
+        if (!v) return '-';
+        const isAlert = days != null && days <= 90;
+        return (
+          <span style={{ color: isAlert ? '#b91c1c' : '#334155', fontWeight: isAlert ? 700 : 500 }}>
+            {v}{days != null ? ` (${days >= 0 ? `${days}d` : `expired ${Math.abs(days)}d`})` : ''}
+          </span>
+        );
+      },
+    },
     {
       key: 'id',
       label: 'Actions',
@@ -481,7 +509,7 @@ export default function StockManagement() {
 
       {lowStock.length > 0 && (
         <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: '12px 16px', marginBottom: 16, fontSize: 13, color: '#dc2626' }}>
-          Low stock alert: {lowStock.map((m) => m.name).join(', ')}
+          Low stock alert (below reorder): {lowStock.map((m) => `${m.name} [${m.stockQuantity}/${Number(m.reorderLevel || 10)}]`).join(', ')}
         </div>
       )}
 
@@ -535,10 +563,10 @@ export default function StockManagement() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 8 }}>
             {expiryAlerts.map((m) => {
               const isExpired = m.daysRemaining < 0;
-              const isUrgent = m.daysRemaining >= 0 && m.daysRemaining < 7;
-              const bg = isExpired ? '#fef2f2' : isUrgent ? '#fff7ed' : '#fffbeb';
-              const border = isExpired ? '#fecaca' : isUrgent ? '#fed7aa' : '#fde68a';
-              const color = isExpired ? '#dc2626' : isUrgent ? '#c2410c' : '#b45309';
+              const isWithinThreeMonths = m.daysRemaining >= 0 && m.daysRemaining <= 90;
+              const bg = isExpired || isWithinThreeMonths ? '#fef2f2' : '#fffbeb';
+              const border = isExpired || isWithinThreeMonths ? '#fecaca' : '#fde68a';
+              const color = isExpired || isWithinThreeMonths ? '#dc2626' : '#b45309';
               return (
                 <div key={m.id} style={{ background: bg, border: `1px solid ${border}`, borderRadius: 8, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
@@ -756,6 +784,14 @@ export default function StockManagement() {
                 <div className={styles.field}>
                   <label className={styles.label}>HSN Code</label>
                   <input className={styles.input} value={newMedForm.hsnCode} onChange={(e) => setNewMedForm((f) => ({ ...f, hsnCode: e.target.value }))} />
+                </div>
+                <div className={styles.field}>
+                  <label className={styles.label}>Rack / Shelf Location</label>
+                  <input className={styles.input} value={newMedForm.location} placeholder="e.g. Shelf A, Box 4" onChange={(e) => setNewMedForm((f) => ({ ...f, location: e.target.value }))} />
+                </div>
+                <div className={styles.field}>
+                  <label className={styles.label}>Reorder Level</label>
+                  <input type="number" min={0} className={styles.input} value={newMedForm.reorderLevel} onChange={(e) => setNewMedForm((f) => ({ ...f, reorderLevel: e.target.value }))} />
                 </div>
                 {isSuperAdmin && (
                   <div className={styles.field} style={{ gridColumn: 'span 2' }}>

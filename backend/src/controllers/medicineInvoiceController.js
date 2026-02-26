@@ -12,6 +12,8 @@ const {
   StockPurchaseReturn,
   Patient,
   User,
+  Hospital,
+  Report,
 } = require('../models');
 const { ensureScopedHospital, isSuperAdmin } = require('../utils/accessScope');
 const { getPaginationParams, buildPaginationMeta, applyPaginationOptions } = require('../utils/pagination');
@@ -19,6 +21,33 @@ const { getPaginationParams, buildPaginationMeta, applyPaginationOptions } = req
 const round2 = (value) => Number(Number(value || 0).toFixed(2));
 const withinTolerance = (a, b, tolerance = 0.5) => Math.abs(Number(a || 0) - Number(b || 0)) <= tolerance;
 const parseRequestKey = (value) => String(value || '').trim().toLowerCase();
+const normalizeText = (value) => String(value || '').trim().toLowerCase();
+
+function normalizePaymentBreakup(input = {}) {
+  const allowedModes = ['cash', 'upi', 'card', 'net_banking', 'insurance', 'other'];
+  const out = {};
+  allowedModes.forEach((mode) => {
+    const amount = Number(input?.[mode] || 0);
+    if (amount > 0) out[mode] = round2(amount);
+  });
+  return out;
+}
+
+function sumPaymentBreakup(paymentBreakup = {}) {
+  return round2(Object.values(paymentBreakup).reduce((sum, val) => sum + Number(val || 0), 0));
+}
+
+function interactionTokenSet(medication) {
+  const tokens = new Set();
+  tokens.add(normalizeText(medication.id));
+  tokens.add(normalizeText(medication.name));
+  tokens.add(normalizeText(medication.genericName));
+  (Array.isArray(medication.interactsWith) ? medication.interactsWith : []).forEach((v) => {
+    const token = normalizeText(v);
+    if (token) tokens.add(token);
+  });
+  return tokens;
+}
 
 function applyDateRange(where, fieldName, from, to) {
   if (from && to) where[fieldName] = { [Op.between]: [from, to] };
@@ -49,20 +78,37 @@ exports.getAll = async (req, res) => {
       include: [
         { model: Patient, as: 'patient', attributes: ['id', 'name', 'patientId', 'phone'] },
         { model: User, as: 'soldBy', attributes: ['id', 'name', 'email'] },
-        { model: MedicineInvoiceItem, as: 'items', attributes: ['id', 'quantity', 'lineTotal'] },
+        {
+          model: MedicineInvoiceItem,
+          as: 'items',
+          attributes: ['id', 'quantity', 'lineTotal'],
+          include: [{ model: Medication, as: 'medication', attributes: ['id', 'name', 'isRestrictedDrug'] }],
+        },
+        { model: Report, as: 'reports', attributes: ['id', 'title', 'originalName', 'createdAt'], required: false },
       ],
       order: [['invoiceDate', 'DESC'], ['createdAt', 'DESC']],
     };
     if (pagination) {
       const queryOptions = applyPaginationOptions(baseOptions, pagination, { forceDistinct: true });
       const invoices = await MedicineInvoice.findAndCountAll(queryOptions);
-      return res.json({
-        data: invoices.rows,
-        meta: buildPaginationMeta(pagination, invoices.count),
+      const rows = (invoices.rows || []).map((r) => {
+        const jr = r.toJSON ? r.toJSON() : r;
+        const hasRestricted = Array.isArray(jr.items) && jr.items.some((it) => it.medication && Boolean(it.medication.isRestrictedDrug));
+        const hasReport = Array.isArray(jr.reports) && jr.reports.length > 0;
+        jr.missingPrescriptionForRestricted = hasRestricted && !hasReport;
+        return jr;
       });
+      return res.json({ data: rows, meta: buildPaginationMeta(pagination, invoices.count) });
     }
     const invoices = await MedicineInvoice.findAll(baseOptions);
-    res.json(invoices);
+    const rows = (invoices || []).map((r) => {
+      const jr = r.toJSON ? r.toJSON() : r;
+      const hasRestricted = Array.isArray(jr.items) && jr.items.some((it) => it.medication && Boolean(it.medication.isRestrictedDrug));
+      const hasReport = Array.isArray(jr.reports) && jr.reports.length > 0;
+      jr.missingPrescriptionForRestricted = hasRestricted && !hasReport;
+      return jr;
+    });
+    res.json(rows);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -80,7 +126,7 @@ exports.getOne = async (req, res) => {
         {
           model: MedicineInvoiceItem,
           as: 'items',
-          include: [{ model: Medication, as: 'medication', attributes: ['id', 'name', 'genericName', 'category'] }],
+          include: [{ model: Medication, as: 'medication', attributes: ['id', 'name', 'genericName', 'category', 'isRestrictedDrug', 'scheduleCategory'] }],
         },
       ],
     });
@@ -109,7 +155,9 @@ exports.create = async (req, res) => {
       patientId,
       invoiceDate,
       paymentMode = 'cash',
-      isPaid = true,
+      isPaid,
+      paymentBreakup = {},
+      applyRoundOff = true,
       notes,
       items = [],
     } = req.body;
@@ -148,6 +196,11 @@ exports.create = async (req, res) => {
 
     const medications = await Medication.findAll({
       where: { id: medicationIds, hospitalId, isActive: true },
+      attributes: [
+        'id', 'name', 'genericName', 'category',
+        'hospitalId', 'stockQuantity', 'unitPrice', 'gstRate',
+        'isRestrictedDrug', 'scheduleCategory',
+      ],
       transaction: tx,
       lock: tx.LOCK.UPDATE,
     });
@@ -197,11 +250,23 @@ exports.create = async (req, res) => {
       const unitPrice = Number(rawItem.unitPrice || medication.unitPrice || 0);
       const discountPct = Number(rawItem.discountPct || 0);
       const taxPct = Number(rawItem.taxPct || 0);
+      const cgstPct = round2(taxPct / 2);
+      const sgstPct = round2(taxPct / 2);
+      const isRestrictedDrug = Boolean(
+        medication.isRestrictedDrug
+        || normalizeText(medication.scheduleCategory).startsWith('schedule_h')
+      );
+      const prescriberDoctorName = String(rawItem.prescriberDoctorName || '').trim();
+      if (isRestrictedDrug && !prescriberDoctorName) {
+        throw new Error(`Prescriber doctor name is required for restricted medicine ${medication.name}`);
+      }
 
       const lineSubtotal = round2(quantity * unitPrice);
       const lineDiscount = round2((lineSubtotal * discountPct) / 100);
       const taxable = lineSubtotal - lineDiscount;
       const lineTax = round2((taxable * taxPct) / 100);
+      const cgstAmount = round2(lineTax / 2);
+      const sgstAmount = round2(lineTax / 2);
       const lineTotal = round2(taxable + lineTax);
 
       subtotal += lineSubtotal;
@@ -242,15 +307,44 @@ exports.create = async (req, res) => {
           unitPrice,
           discountPct,
           taxPct,
+          cgstPct,
+          sgstPct,
           lineSubtotal,
           lineDiscount,
           lineTax,
+          cgstAmount,
+          sgstAmount,
           lineTotal,
+          isRestrictedDrug,
+          prescriberDoctorName: prescriberDoctorName || null,
         },
       };
     });
 
+    // If any item is a restricted drug (Schedule-H), require patient details
+    const hasRestrictedItem = normalizedItems.some((x) => Boolean(x.payload.isRestrictedDrug));
+    if (hasRestrictedItem && !patientId) {
+      await tx.rollback();
+      return res.status(400).json({ message: 'Patient details are required for restricted (Schedule H) medicine sale' });
+    }
+
     const totalAmount = round2(subtotal - discountAmount + taxAmount);
+    const roundedBill = applyRoundOff === false ? totalAmount : round2(Math.round(totalAmount));
+    const roundOffAmount = round2(roundedBill - totalAmount);
+    const normalizedBreakup = normalizePaymentBreakup(paymentBreakup);
+    const paidAmountFromBreakup = sumPaymentBreakup(normalizedBreakup);
+    const paidAmount = paidAmountFromBreakup > 0
+      ? paidAmountFromBreakup
+      : (isPaid === false ? 0 : roundedBill);
+    const effectiveIsPaid = isPaid !== undefined
+      ? Boolean(isPaid)
+      : withinTolerance(paidAmount, roundedBill);
+    if (paidAmountFromBreakup > 0 && !withinTolerance(paidAmountFromBreakup, roundedBill)) {
+      await tx.rollback();
+      return res.status(400).json({
+        message: `Split payment mismatch. Received ${paidAmountFromBreakup}, expected ${roundedBill}`,
+      });
+    }
 
     const invoice = await MedicineInvoice.create({
       hospitalId,
@@ -258,7 +352,11 @@ exports.create = async (req, res) => {
       soldByUserId: req.user.id,
       invoiceDate: invoiceDate || new Date().toISOString().slice(0, 10),
       paymentMode,
-      isPaid: Boolean(isPaid),
+      paymentBreakup: normalizedBreakup,
+      paidAmount,
+      roundOffAmount,
+      grandTotal: roundedBill,
+      isPaid: effectiveIsPaid,
       notes: notes || null,
       subtotal: round2(subtotal),
       discountAmount: round2(discountAmount),
@@ -308,7 +406,7 @@ exports.create = async (req, res) => {
         {
           model: MedicineInvoiceItem,
           as: 'items',
-          include: [{ model: Medication, as: 'medication', attributes: ['id', 'name', 'category'] }],
+          include: [{ model: Medication, as: 'medication', attributes: ['id', 'name', 'category', 'isRestrictedDrug', 'scheduleCategory'] }],
         },
       ],
     });
@@ -325,15 +423,356 @@ exports.markPaid = async (req, res) => {
     const scope = await ensureScopedHospital(req, res);
     if (!scope.allowed) return;
 
-    const invoice = await MedicineInvoice.findByPk(req.params.id);
+    const invoice = await MedicineInvoice.findByPk(req.params.id, {
+      include: [
+        { model: MedicineInvoiceItem, as: 'items', attributes: ['id', 'isRestrictedDrug'] },
+        { model: Report, as: 'reports', where: { type: 'prescription' }, required: false },
+      ],
+    });
     if (!invoice) return res.status(404).json({ message: 'Invoice not found' });
 
     if (!isSuperAdmin(req.user) && invoice.hospitalId !== scope.hospitalId) {
       return res.status(403).json({ message: 'Access denied for this hospital invoice' });
     }
 
-    await invoice.update({ isPaid: Boolean(req.body.isPaid) });
+    const nextIsPaid = Boolean(req.body.isPaid);
+    const normalizedBreakup = normalizePaymentBreakup(req.body.paymentBreakup || {});
+    const breakupPaid = sumPaymentBreakup(normalizedBreakup);
+    const payable = Number(invoice.grandTotal || invoice.totalAmount || 0);
+    // If marking as paid, ensure prescriptions exist for restricted items
+    if (nextIsPaid) {
+      const hasRestricted = Array.isArray(invoice.items) && invoice.items.some((it) => Boolean(it.isRestrictedDrug));
+      const hasPrescriptionReport = Array.isArray(invoice.reports) && invoice.reports.length > 0;
+      if (hasRestricted && !hasPrescriptionReport) {
+        return res.status(400).json({ message: 'Prescription upload required for restricted (Schedule H) medicines before marking invoice as paid' });
+      }
+    }
+    await invoice.update({
+      isPaid: nextIsPaid,
+      paymentMode: req.body.paymentMode || invoice.paymentMode,
+      paymentBreakup: Object.keys(normalizedBreakup).length ? normalizedBreakup : invoice.paymentBreakup,
+      paidAmount: breakupPaid > 0 ? breakupPaid : (nextIsPaid ? payable : 0),
+    });
     res.json({ message: 'Payment status updated', invoice });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.updateDeliveryStatus = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+
+    const invoice = await MedicineInvoice.findByPk(req.params.id);
+    if (!invoice) return res.status(404).json({ message: 'Invoice not found' });
+    if (!isSuperAdmin(req.user) && invoice.hospitalId !== scope.hospitalId) {
+      return res.status(403).json({ message: 'Access denied for this hospital invoice' });
+    }
+
+    const deliveryStatus = String(req.body.deliveryStatus || '').trim();
+    if (!['pending', 'out_for_delivery', 'delivered_paid'].includes(deliveryStatus)) {
+      return res.status(400).json({ message: 'deliveryStatus must be pending | out_for_delivery | delivered_paid' });
+    }
+
+    const patch = {
+      deliveryStatus,
+      deliveryAssignedTo: req.body.deliveryAssignedTo || null,
+      deliveryNotes: req.body.deliveryNotes || null,
+    };
+    if (deliveryStatus === 'delivered_paid') {
+      patch.isPaid = true;
+      patch.paidAmount = Number(invoice.grandTotal || invoice.totalAmount || 0);
+    }
+    await invoice.update(patch);
+    res.json({ message: 'Delivery status updated', invoice });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.scanByBarcode = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+
+    const barcode = String(req.params.barcode || '').trim();
+    if (!barcode) return res.status(400).json({ message: 'barcode is required' });
+
+    const where = {
+      barcode,
+      isActive: true,
+    };
+    if (!isSuperAdmin(req.user)) where.hospitalId = scope.hospitalId;
+    else if (req.query.hospitalId) where.hospitalId = req.query.hospitalId;
+
+    const medication = await Medication.findOne({
+      where,
+      attributes: [
+        'id', 'name', 'genericName', 'category', 'dosage',
+        'hospitalId', 'stockQuantity', 'unitPrice', 'gstRate',
+        'barcode', 'isRestrictedDrug', 'scheduleCategory',
+      ],
+    });
+    if (!medication) return res.status(404).json({ message: 'Medication not found for barcode' });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const batches = await MedicationBatch.findAll({
+      where: {
+        hospitalId: medication.hospitalId,
+        medicationId: medication.id,
+        quantityOnHand: { [Op.gt]: 0 },
+        expiryDate: { [Op.gte]: today },
+        isActive: true,
+      },
+      order: [['expiryDate', 'ASC'], ['purchaseDate', 'ASC'], ['createdAt', 'ASC']],
+      limit: 5,
+    });
+
+    res.json({
+      medication,
+      batches,
+      suggestedPrice: Number(medication.unitPrice || 0),
+      availableStock: Number(medication.stockQuantity || 0),
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.checkInteractions = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+
+    const ids = Array.isArray(req.body.medicationIds) ? req.body.medicationIds.filter(Boolean) : [];
+    if (!ids.length) return res.json({ warnings: [] });
+
+    const where = { id: ids, isActive: true };
+    if (!isSuperAdmin(req.user)) where.hospitalId = scope.hospitalId;
+    else if (req.body.hospitalId) where.hospitalId = req.body.hospitalId;
+
+    const meds = await Medication.findAll({
+      where,
+      attributes: ['id', 'name', 'genericName', 'interactsWith'],
+    });
+    const tokenMaps = new Map(meds.map((m) => [m.id, interactionTokenSet(m)]));
+    const warnings = [];
+    for (let i = 0; i < meds.length; i += 1) {
+      for (let j = i + 1; j < meds.length; j += 1) {
+        const a = meds[i];
+        const b = meds[j];
+        const at = tokenMaps.get(a.id);
+        const bt = tokenMaps.get(b.id);
+        const bTokens = [normalizeText(b.id), normalizeText(b.name), normalizeText(b.genericName)];
+        const aTokens = [normalizeText(a.id), normalizeText(a.name), normalizeText(a.genericName)];
+        const hit = bTokens.some((t) => t && at.has(t)) || aTokens.some((t) => t && bt.has(t));
+        if (hit) {
+          warnings.push({
+            type: 'interaction',
+            medicationA: { id: a.id, name: a.name },
+            medicationB: { id: b.id, name: b.name },
+            message: `Potential interaction: ${a.name} and ${b.name}`,
+          });
+        }
+      }
+    }
+    res.json({ warnings });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.getScheduleHLog = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+
+    const invoiceWhere = {};
+    if (!isSuperAdmin(req.user)) invoiceWhere.hospitalId = scope.hospitalId;
+    else if (req.query.hospitalId) invoiceWhere.hospitalId = req.query.hospitalId;
+    applyDateRange(invoiceWhere, 'invoiceDate', req.query.from, req.query.to);
+
+    const items = await MedicineInvoiceItem.findAll({
+      where: { isRestrictedDrug: true },
+      include: [
+        {
+          model: MedicineInvoice,
+          as: 'invoice',
+          where: invoiceWhere,
+          attributes: ['id', 'invoiceNumber', 'invoiceDate', 'hospitalId'],
+          include: [
+            { model: Patient, as: 'patient', attributes: ['id', 'name', 'patientId', 'phone', 'dateOfBirth', 'gender', 'email', 'address', 'city', 'state', 'emergencyContactName', 'emergencyContactPhone', 'allergies', 'medicalHistory', 'insuranceProvider', 'insuranceNumber'] },
+            { model: Hospital, as: 'hospital', attributes: ['id', 'name', 'address', 'phone', 'email'] },
+            { model: Report, as: 'reports', attributes: ['id', 'title', 'originalName', 'fileName', 'mimeType', 'createdAt'] },
+          ],
+        },
+        { model: Medication, as: 'medication', attributes: ['id', 'name', 'scheduleCategory'] },
+      ],
+      order: [[{ model: MedicineInvoice, as: 'invoice' }, 'invoiceDate', 'DESC']],
+    });
+
+    const data = items.map((it) => ({
+      invoiceId: it.invoice?.id,
+      invoiceNumber: it.invoice?.invoiceNumber,
+      invoiceDate: it.invoice?.invoiceDate,
+      patient: it.invoice?.patient || null,
+      hospital: it.invoice?.hospital || null,
+      reports: it.invoice?.reports || [],
+      medication: it.medication || null,
+      quantity: Number(it.quantity || 0),
+      prescriberDoctorName: it.prescriberDoctorName || null,
+      recordedAt: it.createdAt,
+    }));
+    res.json({ count: data.length, data });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.uploadPrescription = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+
+    const invoice = await MedicineInvoice.findByPk(req.params.id, {
+      include: [{ model: Patient, as: 'patient', attributes: ['id', 'hospitalId'] }],
+    });
+    if (!invoice) return res.status(404).json({ message: 'Invoice not found' });
+
+    if (!isSuperAdmin(req.user) && invoice.hospitalId !== scope.hospitalId) {
+      return res.status(403).json({ message: 'Access denied for this invoice' });
+    }
+
+    if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
+
+    const report = await Report.create({
+      title: req.body.title || req.file.originalname,
+      type: 'prescription',
+      fileName: req.file.filename,
+      originalName: req.file.originalname,
+      filePath: req.file.path,
+      fileSize: req.file.size,
+      mimeType: req.file.mimetype,
+      description: req.body.description || `Prescription for invoice ${invoice.invoiceNumber}`,
+      uploadedBy: req.user?.name || 'System',
+      patientId: invoice.patientId || null,
+      invoiceId: invoice.id,
+    });
+
+    res.status(201).json(report);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
+exports.getReminderCandidates = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+
+    const days = Math.max(1, Number(req.query.days || 25));
+    const where = { patientId: { [Op.ne]: null } };
+    if (!isSuperAdmin(req.user)) where.hospitalId = scope.hospitalId;
+    else if (req.query.hospitalId) where.hospitalId = req.query.hospitalId;
+
+    const invoices = await MedicineInvoice.findAll({
+      where,
+      include: [{ model: Patient, as: 'patient', attributes: ['id', 'name', 'phone', 'chronicConditions'] }],
+      order: [['invoiceDate', 'DESC'], ['createdAt', 'DESC']],
+    });
+
+    const latestByPatient = new Map();
+    invoices.forEach((inv) => {
+      if (!inv.patientId || latestByPatient.has(inv.patientId)) return;
+      latestByPatient.set(inv.patientId, inv);
+    });
+
+    const now = new Date();
+    const candidates = [];
+    latestByPatient.forEach((inv) => {
+      const patient = inv.patient;
+      const chronicConditions = Array.isArray(patient?.chronicConditions) ? patient.chronicConditions : [];
+      if (!chronicConditions.length) return;
+      const lastDate = new Date(`${String(inv.invoiceDate).slice(0, 10)}T00:00:00`);
+      const daysSinceLastInvoice = Math.floor((now - lastDate) / (1000 * 60 * 60 * 24));
+      if (daysSinceLastInvoice < days) return;
+      candidates.push({
+        patientId: patient.id,
+        patientName: patient.name,
+        phone: patient.phone || null,
+        chronicConditions,
+        lastInvoiceDate: inv.invoiceDate,
+        lastInvoiceNumber: inv.invoiceNumber,
+        daysSinceLastInvoice,
+        suggestedMessage: `Your monthly medicine is about to finish. Should we keep it ready for you?`,
+      });
+    });
+    candidates.sort((a, b) => b.daysSinceLastInvoice - a.daysSinceLastInvoice);
+    res.json({ thresholdDays: days, count: candidates.length, data: candidates });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// POST /medicine-invoices/backfill-prescriptions
+exports.backfillPrescriptionLinks = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+    // Only admin/super-admin allowed by route authorization
+    const apply = Boolean(req.body.apply);
+
+    const reports = await Report.findAll({ where: { type: 'prescription', invoiceId: null } });
+    let matched = 0;
+    let updated = 0;
+    let unmatched = 0;
+
+    for (const r of reports) {
+      let foundInvoice = null;
+      try {
+        if (r.patientId) {
+          const createdDate = new Date(r.createdAt);
+          const dateStr = createdDate.toISOString().slice(0, 10);
+          foundInvoice = await MedicineInvoice.findOne({ where: { patientId: r.patientId, invoiceDate: dateStr } });
+          if (!foundInvoice) {
+            const prev = new Date(createdDate); prev.setDate(prev.getDate() - 1);
+            const next = new Date(createdDate); next.setDate(next.getDate() + 1);
+            const prevStr = prev.toISOString().slice(0, 10);
+            const nextStr = next.toISOString().slice(0, 10);
+            foundInvoice = await MedicineInvoice.findOne({ where: { patientId: r.patientId, invoiceDate: { [Op.between]: [prevStr, nextStr] } } });
+          }
+        }
+        if (!foundInvoice && r.originalName) {
+          const m = /MED-[0-9A-F]{4,}/i.exec(r.originalName);
+          if (m) {
+            const candidate = m[0];
+            foundInvoice = await MedicineInvoice.findOne({ where: { invoiceNumber: { [Op.iLike]: candidate } } });
+          }
+        }
+        if (!foundInvoice && r.description) {
+          const m2 = /MED-[0-9A-F]{4,}/i.exec(r.description);
+          if (m2) {
+            const candidate = m2[0];
+            foundInvoice = await MedicineInvoice.findOne({ where: { invoiceNumber: { [Op.iLike]: candidate } } });
+          }
+        }
+
+        if (foundInvoice) {
+          matched += 1;
+          if (apply) {
+            await r.update({ invoiceId: foundInvoice.id });
+            updated += 1;
+          }
+        } else {
+          unmatched += 1;
+        }
+      } catch (err) {
+        // continue
+      }
+    }
+
+    res.json({ total: reports.length, matched, updated, unmatched });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -703,8 +1142,8 @@ exports.getAnalytics = async (req, res) => {
     });
 
     const totalInvoices = invoices.length;
-    const grossTotalAmount = round2(invoices.reduce((sum, i) => sum + Number(i.totalAmount || 0), 0));
-    const grossPaidAmount = round2(invoices.filter((i) => i.isPaid).reduce((sum, i) => sum + Number(i.totalAmount || 0), 0));
+    const grossTotalAmount = round2(invoices.reduce((sum, i) => sum + Number(i.grandTotal || i.totalAmount || 0), 0));
+    const grossPaidAmount = round2(invoices.filter((i) => i.isPaid).reduce((sum, i) => sum + Number(i.grandTotal || i.totalAmount || 0), 0));
     const totalReturnsAmount = round2(returns.reduce((s, r) => s + Number(r.totalAmount || 0), 0));
     const returnsOnPaid = round2(returns.filter((r) => r.invoice?.isPaid).reduce((s, r) => s + Number(r.totalAmount || 0), 0));
     const totalAmount = round2(grossTotalAmount - totalReturnsAmount);
@@ -721,7 +1160,7 @@ exports.getAnalytics = async (req, res) => {
         dayMap.set(day, { date: day, invoices: 0, amount: 0, paidAmount: 0, pendingAmount: 0 });
       }
       const dayRec = dayMap.get(day);
-      const amount = Number(invoice.totalAmount || 0);
+      const amount = Number(invoice.grandTotal || invoice.totalAmount || 0);
       dayRec.invoices += 1;
       dayRec.amount += amount;
       if (invoice.isPaid) dayRec.paidAmount += amount;
@@ -973,7 +1412,11 @@ exports.createReturn = async (req, res) => {
     );
 
     for (const it of normalizedItems) {
-      const med = await Medication.findByPk(it.medicationId, { transaction: tx, lock: tx.LOCK.UPDATE });
+      const med = await Medication.findByPk(it.medicationId, {
+        attributes: ['id', 'stockQuantity'],
+        transaction: tx,
+        lock: tx.LOCK.UPDATE,
+      });
       if (!med) {
         await tx.rollback();
         return res.status(400).json({ message: 'Medication not found while processing return' });

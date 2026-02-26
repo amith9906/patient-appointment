@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const { sequelize } = require('./models');
+const notificationService = require('./utils/notificationService');
 
 const app = express();
 
@@ -50,7 +51,16 @@ app.use('/api/doctor-leaves', require('./routes/doctorLeaves'));
 app.use('/api/treatment-plans', require('./routes/treatmentPlans'));
 app.use('/api/ipd', require('./routes/ipd'));
 app.use('/api/ot', require('./routes/ot'));
+app.use('/api/nurses', require('./routes/nurses'));
+app.use('/api/shifts', require('./routes/shifts'));
+app.use('/api/nurse-leaves', require('./routes/nurseLeaves'));
+app.use('/api/vitals', require('./routes/vitals'));
+app.use('/api/medication-administration', require('./routes/medicationAdministration'));
+app.use('/api/nurse-handovers', require('./routes/nurseHandovers'));
+app.use('/api/fluid-balance', require('./routes/fluidBalance'));
 app.use('/api/search', require('./routes/search'));
+app.use('/api/clinical-notes', require('./routes/clinicalNotes'));
+app.use('/api/notifications', require('./routes/notifications'));
 
 // Health check
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));
@@ -79,6 +89,19 @@ async function start() {
     }
 
     app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+
+    if (process.env.NODE_ENV !== 'test') {
+      const runExpiryCheck = async () => {
+        try {
+          await notificationService.notifyExpiringMedications();
+        } catch (err) {
+          console.error('Expiry notification job failed:', err);
+        }
+      };
+      runExpiryCheck();
+      const intervalMs = 6 * 60 * 60 * 1000; // every 6 hours
+      setInterval(runExpiryCheck, intervalMs);
+    }
   } catch (err) {
     console.error('Startup error:', err);
     process.exit(1);

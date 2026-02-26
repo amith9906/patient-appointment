@@ -7,7 +7,7 @@ import Badge from '../components/Badge';
 import SearchableSelect from '../components/SearchableSelect';
 import styles from './Page.module.css';
 
-const ROLES = ['super_admin', 'admin', 'doctor', 'receptionist', 'lab_technician', 'patient'];
+const ROLES = ['super_admin', 'admin', 'doctor', 'nurse', 'receptionist', 'lab_technician', 'patient'];
 const INIT = { name: '', email: '', password: '', role: 'receptionist', hospitalId: '' };
 
 export default function UserManagement() {
@@ -68,7 +68,7 @@ export default function UserManagement() {
   const openAssignDoctor = (user) => {
     setAssignTarget(user);
     const linked = doctorProfiles.find((d) => d.userId === user.id);
-    setAssignDoctorId(linked.id || '');
+    setAssignDoctorId(linked ? linked.id : '');
     setAssignModal(true);
   };
 
@@ -93,7 +93,15 @@ export default function UserManagement() {
     ? doctorProfiles.filter((d) => !d.userId || d.userId === assignTarget.id)
     : doctorProfiles;
 
-  const ROLE_COLORS = { super_admin: '#0f172a', admin: '#dc2626', doctor: '#2563eb', receptionist: '#16a34a', lab_technician: '#9333ea', patient: '#d97706' };
+  const ROLE_COLORS = {
+    super_admin: '#0f172a',
+    admin: '#dc2626',
+    doctor: '#2563eb',
+    nurse: '#059669',
+    receptionist: '#16a34a',
+    lab_technician: '#9333ea',
+    patient: '#d97706',
+  };
 
   const columns = [
     { key: 'name', label: 'Name', render: (v, r) => <div><div className="font-semibold">{v}</div><div style={{ fontSize: 12, color: '#64748b' }}>{r.email}</div></div> },

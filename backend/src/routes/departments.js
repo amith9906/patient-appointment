@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { Department, Hospital, Doctor } = require('../models');
+const { Department, Hospital, Doctor, User } = require('../models');
 const { authenticate, authorize } = require('../middleware/auth');
 const { ensureScopedHospital, isSuperAdmin } = require('../utils/accessScope');
 
@@ -20,7 +20,10 @@ router.get('/', authorize('super_admin', 'admin', 'receptionist', 'doctor'), asy
 
     const departments = await Department.findAll({
       where,
-      include: [{ model: Hospital, as: 'hospital', attributes: ['id', 'name'] }],
+      include: [
+        { model: Hospital, as: 'hospital', attributes: ['id', 'name'] },
+        { model: User, as: 'hod', attributes: ['id', 'name'] }
+      ],
       order: [['createdAt', 'DESC']],
     });
     res.json(departments);
@@ -35,6 +38,10 @@ router.post('/', authorize('super_admin', 'admin', 'receptionist'), async (req, 
     const payload = { ...req.body };
     if (!isSuperAdmin(req.user)) payload.hospitalId = scope.hospitalId;
     if (!payload.hospitalId) return res.status(400).json({ message: 'hospitalId is required' });
+
+    // Normalize: convert empty strings to null for UUID fields
+    if (payload.hodUserId === '') payload.hodUserId = null;
+    if (payload.hospitalId === '') payload.hospitalId = null;
 
     const dept = await Department.create(payload);
     res.status(201).json(dept);
@@ -55,6 +62,11 @@ router.put('/:id', authorize('super_admin', 'admin', 'receptionist'), async (req
 
     const payload = { ...req.body };
     if (!isSuperAdmin(req.user)) delete payload.hospitalId;
+
+    // Normalize: convert empty strings to null for UUID fields
+    if (payload.hodUserId === '') payload.hodUserId = null;
+    if (payload.hospitalId === '') payload.hospitalId = null;
+
     await dept.update(payload);
     res.json(dept);
   } catch (err) { res.status(400).json({ message: err.message }); }

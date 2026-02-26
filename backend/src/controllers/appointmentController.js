@@ -67,7 +67,7 @@ const checkSlotCapacity = async ({ doctor, date, time, excludeAppointmentId = nu
     throw new Error('Doctor is not available at the selected date/time');
   }
   // Check if doctor is on leave for the given date
-  const leave = await DoctorLeave.findOne({ where: { doctorId: doctor.id, leaveDate: date } });
+  const leave = await DoctorLeave.findOne({ where: { doctorId: doctor.id, leaveDate: date, status: 'approved' } });
   if (leave) {
     if (leave.isFullDay) {
       throw new Error('Doctor is on leave on the selected date');

@@ -14,7 +14,10 @@ const INIT = {
   manufacturer: '', description: '', sideEffects: '', contraindications: '',
   stockQuantity: 0, unitPrice: 0, purchasePrice: '', gstRate: 0,
   hsnCode: '', barcode: '', supplierName: '',
+  location: '', reorderLevel: 10,
   expiryDate: '', batchNo: '', mfgDate: '', requiresPrescription: true, hospitalId: '',
+  scheduleCategory: 'otc',
+  isRestrictedDrug: false,
 };
 
 function downloadBlob(blob, filename) {
@@ -35,8 +38,7 @@ function getMedDaysRemaining(expiryDate) {
 function getRowBg(days) {
   if (days === null) return undefined;
   if (days < 0) return '#fef2f2';      // expired - light red
-  if (days < 30) return '#fff7ed';     // expiring soon - light orange
-  if (days < 60) return '#fefce8';     // caution - light yellow
+  if (days <= 90) return '#fee2e2';    // expiring within 3 months - red alert
   return undefined;
 }
 
@@ -46,9 +48,7 @@ function ExpiryBadge({ expiryDate }) {
   let color, label, bg;
   if (days < 0) { color = '#b91c1c'; bg = '#fee2e2'; label = `EXPIRED (${Math.abs(days)}d ago)`; }
   else if (days === 0) { color = '#b91c1c'; bg = '#fee2e2'; label = 'Expires TODAY'; }
-  else if (days < 7) { color = '#b91c1c'; bg = '#fee2e2'; label = `${days}d - CRITICAL`; }
-  else if (days < 30) { color = '#92400e'; bg = '#fef3c7'; label = `${days}d - Warning`; }
-  else if (days < 60) { color = '#854d0e'; bg = '#fef9c3'; label = `${days}d`; }
+  else if (days <= 90) { color = '#b91c1c'; bg = '#fee2e2'; label = `${days}d - Expiring < 3 months`; }
   else { color = '#15803d'; bg = undefined; label = expiryDate; }
 
   return (
@@ -59,7 +59,7 @@ function ExpiryBadge({ expiryDate }) {
           {label}
         </span>
       ) : (
-        <span style={{ color, fontSize: 11 }}>{days >= 60 ? `${days}d left` : label}</span>
+        <span style={{ color, fontSize: 11 }}>{days > 90 ? `${days}d left` : label}</span>
       )}
     </div>
   );
@@ -68,9 +68,7 @@ function ExpiryBadge({ expiryDate }) {
 function daysRemainingColor(days) {
   if (days === null) return '#64748b';
   if (days < 0) return '#dc2626';
-  if (days < 7) return '#dc2626';
-  if (days < 30) return '#d97706';
-  if (days < 60) return '#ca8a04';
+  if (days <= 90) return '#dc2626';
   return '#16a34a';
 }
 
@@ -243,6 +241,18 @@ export default function Medications() {
 
   const set = (k, v) => setForm({ ...form, [k]: v });
 
+  // Auto-check restricted flag when scheduleCategory indicates Schedule H
+  useEffect(() => {
+    try {
+      const sc = String(form.scheduleCategory || '').trim().toLowerCase();
+      if (sc && sc.startsWith('schedule_h')) {
+        if (!form.isRestrictedDrug) set('isRestrictedDrug', true);
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [form.scheduleCategory]);
+
   // Computed stats for summary cards
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -252,7 +262,7 @@ export default function Medications() {
     totalStock: meds.reduce((s, m) => s + Number(m.stockQuantity || 0), 0),
     vaccines: meds.filter(m => m.category === 'vaccine'),
     tablets: meds.filter(m => m.category === 'tablet'),
-    lowStock: meds.filter(m => Number(m.stockQuantity || 0) < 10),
+    lowStock: meds.filter(m => Number(m.stockQuantity || 0) < Number(m.reorderLevel || 10)),
     expired: meds.filter(m => {
       if (!m.expiryDate) return false;
       return new Date(m.expiryDate + 'T00:00:00') < today;
@@ -261,15 +271,15 @@ export default function Medications() {
       if (!m.expiryDate) return false;
       const exp = new Date(m.expiryDate + 'T00:00:00');
       const diff = Math.floor((exp - today) / (1000 * 60 * 60 * 24));
-      return diff >= 0 && diff < 30;
+      return diff >= 0 && diff <= 90;
     }),
   };
 
   // Expiry summary counts
   const expiryExpired = expiryData.filter(m => (m.daysRemaining || 0) < 0).length;
   const expiryCritical = expiryData.filter(m => m.daysRemaining >= 0 && m.daysRemaining < 7).length;
-  const expiryWarning = expiryData.filter(m => m.daysRemaining >= 7 && m.daysRemaining < 30).length;
-  const expirySafe = expiryData.filter(m => m.daysRemaining >= 30).length;
+  const expiryWarning = expiryData.filter(m => m.daysRemaining >= 0 && m.daysRemaining <= 90).length;
+  const expirySafe = expiryData.filter(m => m.daysRemaining > 90).length;
 
   const expiryColumns = [
     { key: 'name', label: 'Medicine', render: (v, r) => (
@@ -285,7 +295,7 @@ export default function Medications() {
         {daysRemainingLabel(v)}
       </span>
     )},
-    { key: 'stockQuantity', label: 'Stock', render: (v) => <span style={{ fontWeight: 700, color:v < 10 ? '#dc2626' : '#334155'}}>{v}</span> },
+    { key: 'stockQuantity', label: 'Stock', render: (v, r) => <span style={{ fontWeight: 700, color:Number(v || 0) < Number(r.reorderLevel || 10) ? '#dc2626' : '#334155'}}>{v}</span> },
     { key: 'hospital', label: 'Hospital', render: (v) => v?.name || '-' },
   ];
 
@@ -330,7 +340,7 @@ export default function Medications() {
             {stats.lowStock.length}
           </div>
           <div style={{ fontSize: 12, color: '#64748b' }}>Low Stock</div>
-          <div style={{ fontSize: 11, color: '#94a3b8' }}>Below 10 units</div>
+          <div style={{ fontSize: 11, color: '#94a3b8' }}>Below configured reorder level</div>
         </div>
         <div className={styles.card} style={{ padding: '12px 16px', borderLeft: '4px solid #dc2626', cursor: 'pointer' }}
           onClick={() => { setStockFilter('expired'); setCatFilter(''); setTab('list'); }}>
@@ -346,7 +356,7 @@ export default function Medications() {
             {stats.expiringSoon.length}
           </div>
           <div style={{ fontSize: 12, color: '#64748b' }}>Expiring Soon</div>
-          <div style={{ fontSize: 11, color: '#94a3b8' }}>Within 30 days</div>
+          <div style={{ fontSize: 11, color: '#94a3b8' }}>Within 90 days</div>
         </div>
       </div>
 
@@ -375,9 +385,9 @@ export default function Medications() {
             </select>
             <select className={styles.filterSelect} value={stockFilter} onChange={(e) => { setStockFilter(e.target.value); setCatFilter(''); }}>
               <option value="">All Stock Status</option>
-              <option value="low">Warning Low Stock (&lt;10)</option>
+              <option value="low">Warning Low Stock (&lt; Reorder)</option>
               <option value="expired">Expired</option>
-              <option value="expiring">Expiring within 30 days</option>
+              <option value="expiring">Expiring within 90 days</option>
               <option value="vaccines">Vaccine Vaccines only</option>
             </select>
             {(stockFilter || catFilter || search) && (
@@ -391,8 +401,7 @@ export default function Medications() {
           <div style={{ display: 'flex', gap: 12, marginBottom: 10, fontSize: 12, color: '#64748b', flexWrap: 'wrap' }}>
             <span>Row color:</span>
             <span style={{ background: '#fef2f2', padding: '1px 8px', borderRadius: 4, color: '#b91c1c', fontWeight: 600 }}>Expired</span>
-            <span style={{ background: '#fff7ed', padding: '1px 8px', borderRadius: 4, color: '#92400e', fontWeight: 600 }}>Expiring within 30 days</span>
-            <span style={{ background: '#fefce8', padding: '1px 8px', borderRadius: 4, color: '#854d0e', fontWeight: 600 }}>Expiring within 60 days</span>
+            <span style={{ background: '#fee2e2', padding: '1px 8px', borderRadius: 4, color: '#b91c1c', fontWeight: 600 }}>Expiring within 90 days</span>
           </div>
 
           <div className={styles.card} style={{ overflow: 'hidden' }}>
@@ -405,7 +414,7 @@ export default function Medications() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
                     <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
-                      {['Medicine', 'HSN', 'Type', 'Dosage', 'Stock', 'Price', 'GST', 'Expiry', 'Rx', 'Actions'].map(h => (
+                      {['Medicine', 'HSN', 'Type', 'Dosage', 'Location', 'Stock', 'Price', 'GST', 'Expiry', 'Rx', 'Actions'].map(h => (
                         <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 600, color: '#64748b', whiteSpace: 'nowrap' }}>{h}</th>
                       ))}
                     </tr>
@@ -433,14 +442,16 @@ export default function Medications() {
                             <Badge text={m.category} type={m.category} />
                           </td>
                           <td style={{ padding: '10px 12px', color: '#475569' }}>{m.dosage || '-'}</td>
+                          <td style={{ padding: '10px 12px', color: '#475569', minWidth: 120 }}>{m.location || '-'}</td>
                           <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
                             <span style={{
                               fontWeight: 700,
-                              color: Number(m.stockQuantity) < 10 ? '#dc2626' : Number(m.stockQuantity) < 50 ? '#d97706' : '#16a34a',
+                              color: Number(m.stockQuantity || 0) < Number(m.reorderLevel || 10) ? '#dc2626' : '#16a34a',
                             }}>
                               {m.stockQuantity}
                             </span>
-                            {Number(m.stockQuantity) < 10 && (
+                            <div style={{ fontSize: 10, color: '#94a3b8' }}>Reorder {Number(m.reorderLevel || 10)}</div>
+                            {Number(m.stockQuantity || 0) < Number(m.reorderLevel || 10) && (
                               <span style={{ marginLeft: 4, fontSize: 10, color: '#dc2626', fontWeight: 600 }}>LOW</span>
                             )}
                           </td>
@@ -521,8 +532,8 @@ export default function Medications() {
             {[
               { label: 'Expired', count: expiryExpired, bg: '#fee2e2', color: '#b91c1c' },
               { label: 'Critical (<7d)', count: expiryCritical, bg: '#fef3c7', color: '#92400e' },
-              { label: 'Warning (7-30d)', count: expiryWarning, bg: '#fff7ed', color: '#c2410c' },
-              { label: 'Safe (>30d)', count: expirySafe, bg: '#dcfce7', color: '#15803d' },
+              { label: 'Warning (<=90d)', count: expiryWarning, bg: '#fee2e2', color: '#b91c1c' },
+              { label: 'Safe (>90d)', count: expirySafe, bg: '#dcfce7', color: '#15803d' },
             ].map((s) => (
               <div key={s.label} style={{ background: s.bg, color: s.color, padding: '8px 16px', borderRadius: 10, fontSize: 13, fontWeight: 600 }}>
                 {s.count} {s.label}
@@ -561,7 +572,7 @@ export default function Medications() {
                           <td style={{ padding: '10px 12px', fontWeight: 700, color: daysRemainingColor(m.daysRemaining) }}>
                             {daysRemainingLabel(m.daysRemaining)}
                           </td>
-                          <td style={{ padding: '10px 12px', fontWeight: 700, color:m.stockQuantity < 10 ? '#dc2626' : '#334155'}}>
+                          <td style={{ padding: '10px 12px', fontWeight: 700, color:Number(m.stockQuantity || 0) < Number(m.reorderLevel || 10) ? '#dc2626' : '#334155'}}>
                             {m.stockQuantity}
                           </td>
                           <td style={{ padding: '10px 12px', color: '#64748b' }}>{m.hospital?.name || '-'}</td>
@@ -601,9 +612,21 @@ export default function Medications() {
                 <option value={28}>28%</option>
               </select>
             </div>
+            <div className={styles.field}><label className={styles.label}>Schedule Category</label>
+              <select className={styles.input} value={form.scheduleCategory || 'otc'} onChange={(e) => set('scheduleCategory', e.target.value)}>
+                <option value="otc">OTC</option>
+                <option value="schedule_h">Schedule H</option>
+                <option value="schedule_h1">Schedule H1</option>
+              </select>
+            </div>
+            <div className={styles.field}><label className={styles.label}>Is Restricted Drug</label>
+              <input type="checkbox" style={{ transform: 'scale(1.2)' }} checked={Boolean(form.isRestrictedDrug)} onChange={(e) => set('isRestrictedDrug', e.target.checked)} />
+            </div>
             <div className={styles.field}><label className={styles.label}>HSN Code</label><input className={styles.input} placeholder="e.g. 3004 (medicines), 3002 (vaccines)" value={form.hsnCode || ''} onChange={(e) => set('hsnCode', e.target.value)} maxLength={10} /></div>
             <div className={styles.field}><label className={styles.label}>Barcode (EAN/UPC)</label><input className={styles.input} placeholder="Scan or enter barcode" value={form.barcode || ''} onChange={(e) => set('barcode', e.target.value)} /></div>
             <div className={styles.field}><label className={styles.label}>Supplier / Vendor</label><input className={styles.input} placeholder="Default supplier name" value={form.supplierName || ''} onChange={(e) => set('supplierName', e.target.value)} /></div>
+            <div className={styles.field}><label className={styles.label}>Rack / Shelf Location</label><input className={styles.input} placeholder="e.g. Shelf A, Box 4" value={form.location || ''} onChange={(e) => set('location', e.target.value)} /></div>
+            <div className={styles.field}><label className={styles.label}>Reorder Level</label><input type="number" min={0} className={styles.input} value={form.reorderLevel ?? 10} onChange={(e) => set('reorderLevel', e.target.value)} /></div>
             <div className={styles.field}><label className={styles.label}>Stock Quantity</label><input type="number" className={styles.input} value={form.stockQuantity} onChange={(e) => set('stockQuantity', e.target.value)} /></div>
             <div className={styles.field}><label className={styles.label}>Opening Batch No (create only)</label><input className={styles.input} placeholder="e.g. OPEN-A1" value={form.batchNo || ''} onChange={(e) => set('batchNo', e.target.value)} /></div>
             <div className={styles.field}><label className={styles.label}>Opening Mfg Date (create only)</label><input type="date" className={styles.input} value={form.mfgDate || ''} onChange={(e) => set('mfgDate', e.target.value)} /></div>
@@ -649,7 +672,7 @@ export default function Medications() {
                 {stockModal.expiryDate && (
                   <div style={{ marginTop: 4, fontSize: 12 }}>
                     Expires: <strong>{stockModal.expiryDate}</strong>
-                    {getMedDaysRemaining(stockModal.expiryDate) < 30 && (
+                    {getMedDaysRemaining(stockModal.expiryDate) <= 90 && (
                       <span style={{ marginLeft: 6, color: '#dc2626', fontWeight: 600 }}>
                         Warning {getMedDaysRemaining(stockModal.expiryDate) < 0 ? 'EXPIRED' : `${getMedDaysRemaining(stockModal.expiryDate)}d remaining`}
                       </span>

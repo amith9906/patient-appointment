@@ -8,7 +8,7 @@ const User = sequelize.define('User', {
   email: { type: DataTypes.STRING, allowNull: false, unique: true, validate: { isEmail: true } },
   password: { type: DataTypes.STRING, allowNull: false },
   role: {
-    type: DataTypes.ENUM('super_admin', 'admin', 'doctor', 'receptionist', 'lab_technician', 'patient'),
+    type: DataTypes.ENUM('super_admin', 'admin', 'doctor', 'nurse', 'receptionist', 'lab_technician', 'patient'),
     defaultValue: 'receptionist',
   },
   hospitalId: { type: DataTypes.UUID, allowNull: true },

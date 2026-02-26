@@ -105,7 +105,7 @@ exports.create = async (req, res) => {
     const hospitalId = isSuperAdmin(req.user) ? (req.body.hospitalId || null) : scope.hospitalId;
     if (!hospitalId) return res.status(400).json({ message: 'hospitalId is required' });
 
-    const { patientId, surgeonId, procedureName, scheduledDate, scheduledTime, estimatedDuration, otRoom, anesthesiaType, admissionId, preOpNotes } = req.body;
+    const { patientId, surgeonId, procedureName, surgeryType, scheduledDate, scheduledTime, estimatedDuration, otRoom, anesthesiaType, admissionId, preOpNotes } = req.body;
     if (!patientId || !surgeonId || !procedureName || !scheduledDate || !scheduledTime) {
       return res.status(400).json({ message: 'patientId, surgeonId, procedureName, scheduledDate, scheduledTime are required' });
     }
@@ -117,7 +117,7 @@ exports.create = async (req, res) => {
     if (!doctor) return res.status(404).json({ message: 'Surgeon not found in this hospital' });
 
     const schedule = await OTSchedule.create({
-      hospitalId, patientId, surgeonId, procedureName, scheduledDate, scheduledTime,
+      hospitalId, patientId, surgeonId, procedureName, surgeryType, scheduledDate, scheduledTime,
       estimatedDuration: estimatedDuration || 60, otRoom, anesthesiaType,
       admissionId: admissionId || null, preOpNotes,
     });

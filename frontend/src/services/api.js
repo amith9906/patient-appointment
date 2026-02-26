@@ -77,6 +77,8 @@ export const doctorAPI = {
   getMe: () => api.get('/doctors/me'),
   getMyAppointments: (params) => api.get('/doctors/me/appointments', { params }),
   getMyPatients: () => api.get('/doctors/me/patients'),
+  getDeptDoctors: () => api.get('/doctors/department/doctors'),
+  getDeptStats: (params) => api.get('/doctors/department/stats', { params }),
 };
 
 // Patients
@@ -137,6 +139,13 @@ export const medicineInvoiceAPI = {
   getOne: (id) => api.get(`/medicine-invoices/${id}`),
   create: (data) => api.post('/medicine-invoices', data),
   markPaid: (id, isPaid) => api.patch(`/medicine-invoices/${id}/mark-paid`, { isPaid }),
+  updateDeliveryStatus: (id, data) => api.patch(`/medicine-invoices/${id}/delivery-status`, data),
+  scanBarcode: (barcode, params) => api.get(`/medicine-invoices/barcode/${encodeURIComponent(barcode)}`, { params }),
+  checkInteractions: (data) => api.post('/medicine-invoices/interaction-check', data),
+  getScheduleHLog: (params) => api.get('/medicine-invoices/schedule-h-log', { params }),
+  getReminderCandidates: (params) => api.get('/medicine-invoices/reminder-candidates', { params }),
+  uploadPrescription: (invoiceId, formData) => api.post(`/medicine-invoices/${invoiceId}/prescription`, formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  backfillPrescriptions: (data) => api.post('/medicine-invoices/backfill-prescriptions', data),
   getAnalytics: (params) => api.get('/medicine-invoices/analytics', { params }),
   getGSTReport: (params) => api.get('/medicine-invoices/gst-report', { params }),
   getGSTR1: (params) => api.get('/medicine-invoices/gstr1', { params }),
@@ -227,6 +236,29 @@ export const prescriptionAPI = {
   delete: (id) => api.delete(`/prescriptions/${id}`),
 };
 
+// Reports (files like lab reports, prescriptions, etc.)
+const fetchPatientReports = (patientId, params) => api.get(`/reports/patient/${patientId}`, { params });
+
+export const reportAPI = {
+  getPatientReports: fetchPatientReports,
+  getByPatient: fetchPatientReports,
+  getOne: (id) => api.get(`/reports/${id}`),
+  download: (id) => api.get(`/reports/${id}/download`, { responseType: 'blob' }),
+  view: (id) => api.get(`/reports/${id}/view`, { responseType: 'blob' }),
+  upload: (patientId, formData) =>
+    api.post(`/reports/patient/${patientId}/upload`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  delete: (id) => api.delete(`/reports/${id}`),
+};
+
+// Notifications (in-app + email)
+export const notificationsAPI = {
+  list: (params) => api.get('/notifications', { params }),
+  markRead: (id) => api.patch(`/notifications/${id}/read`),
+  refreshExpiry: () => api.post('/notifications/refresh-expiry'),
+};
+
 // Hospital Settings (per-hospital, persisted in DB)
 export const hospitalSettingsAPI = {
   get: (hospitalId) => api.get(`/hospitals/${hospitalId}/settings`),
@@ -247,8 +279,30 @@ export const pdfAPI = {
 
 // Vitals
 export const vitalsAPI = {
-  get: (appointmentId) => api.get(`/appointments/${appointmentId}/vitals`),
-  save: (appointmentId, data) => api.put(`/appointments/${appointmentId}/vitals`, data),
+  record: (data) => api.post('/vitals', data),
+  getHistory: (params) => api.get('/vitals/history', { params }),
+  delete: (id) => api.delete(`/vitals/${id}`),
+};
+
+// Medication Administration
+export const medicationAdminAPI = {
+  record: (data) => api.post('/medication-administration', data),
+  getLogs: (params) => api.get('/medication-administration/logs', { params }),
+  delete: (id) => api.delete(`/medication-administration/${id}`),
+};
+
+// Nurse Handover (SBAR)
+export const nurseHandoverAPI = {
+  create: (data) => api.post('/nurse-handovers', data),
+  get: (params) => api.get('/nurse-handovers', { params }),
+  signOff: (id) => api.patch(`/nurse-handovers/${id}/sign-off`),
+};
+
+// Fluid Balance (Intake/Output)
+export const fluidBalanceAPI = {
+  record: (data) => api.post('/fluid-balance', data),
+  getHistory: (params) => api.get('/fluid-balance/history', { params }),
+  delete: (id) => api.delete(`/fluid-balance/${id}`),
 };
 
 // Bulk upload / template download
@@ -274,19 +328,6 @@ export const expenseAPI = {
   create: (data) => api.post('/expenses', data),
   update: (id, data) => api.put(`/expenses/${id}`, data),
   delete: (id) => api.delete(`/expenses/${id}`),
-};
-
-// Reports
-export const reportAPI = {
-  getByPatient: (patientId, params) => api.get(`/reports/patient/${patientId}`, { params }),
-  getOne: (id) => api.get(`/reports/${id}`),
-  upload: (patientId, formData) =>
-    api.post(`/reports/patient/${patientId}/upload`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }),
-  download: (id) =>
-    api.get(`/reports/${id}/download`, { responseType: 'blob' }),
-  delete: (id) => api.delete(`/reports/${id}`),
 };
 
 // OT Management
@@ -320,6 +361,9 @@ export const ipdAPI = {
   addPayment: (id, data) => api.post(`/ipd/${id}/bill/payments`, data),
   deletePayment: (id, paymentId) => api.delete(`/ipd/${id}/bill/payments/${paymentId}`),
   updateDiscount: (id, data) => api.patch(`/ipd/${id}/bill/discount`, data),
+  getNurses: (id) => api.get(`/ipd/${id}/nurses`),
+  assignNurse: (id, data) => api.post(`/ipd/${id}/nurses`, data),
+  removeNurse: (id, assignmentId) => api.delete(`/ipd/${id}/nurses/${assignmentId}`),
 };
 
 // Treatment Plans
@@ -336,7 +380,53 @@ export const doctorLeaveAPI = {
   getAll: (params) => api.get('/doctor-leaves', { params }),
   checkLeave: (doctorId, date) => api.get('/doctor-leaves/check', { params: { doctorId, date } }),
   create: (data) => api.post('/doctor-leaves', data),
+  approve: (id) => api.patch(`/doctor-leaves/${id}/approve`),
+  reject: (id) => api.patch(`/doctor-leaves/${id}/reject`),
   delete: (id) => api.delete(`/doctor-leaves/${id}`),
+};
+
+// Nurses
+export const nurseAPI = {
+  getAll: (params) => api.get('/nurses', { params }),
+  getOne: (id) => api.get(`/nurses/${id}`),
+  getMe: () => api.get('/nurses/me'),
+  getDashboard: (params) => api.get('/nurses/dashboard', { params }),
+  create: (data) => api.post('/nurses', data),
+  update: (id, data) => api.put(`/nurses/${id}`, data),
+  delete: (id) => api.delete(`/nurses/${id}`),
+};
+
+// Shifts
+export const shiftAPI = {
+  getAll: () => api.get('/shifts'),
+  create: (data) => api.post('/shifts', data),
+  update: (id, data) => api.put(`/shifts/${id}`, data),
+  delete: (id) => api.delete(`/shifts/${id}`),
+  getAssignments: (params) => api.get('/shifts/assignments', { params }),
+  assign: (data) => api.post('/shifts/assignments', data),
+  removeAssignment: (id) => api.delete(`/shifts/assignments/${id}`),
+  bulkAssign: (data) => api.post('/shifts/assignments/bulk', data),
+  cloneLastWeek: (data) => api.post('/shifts/assignments/clone', data),
+  uploadBulk: (formData) => api.post('/shifts/assignments/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+};
+
+// Clinical Notes
+export const clinicalNotesAPI = {
+  create: (data) => api.post('/clinical-notes', data),
+  getAll: (params) => api.get('/clinical-notes', { params }),
+  getOne: (id) => api.get(`/clinical-notes/${id}`),
+  update: (id, data) => api.put(`/clinical-notes/${id}`, data),
+  amend: (id, data) => api.post(`/clinical-notes/${id}/amend`, data),
+  sign: (id) => api.post(`/clinical-notes/${id}/sign`),
+};
+
+// Nurse Leaves
+export const nurseLeaveAPI = {
+  getAll: (params) => api.get('/nurse-leaves', { params }),
+  apply: (data) => api.post('/nurse-leaves/apply', data),
+  approve: (id) => api.put(`/nurse-leaves/${id}/approve`),
+  reject: (id) => api.put(`/nurse-leaves/${id}/reject`),
+  delete: (id) => api.delete(`/nurse-leaves/${id}`),
 };
 
 // Global Search

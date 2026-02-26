@@ -8,6 +8,7 @@ const OTSchedule = sequelize.define('OTSchedule', {
   patientId: { type: DataTypes.UUID, allowNull: false },
   surgeonId: { type: DataTypes.UUID, allowNull: false },
   procedureName: { type: DataTypes.STRING, allowNull: false },
+  surgeryType: { type: DataTypes.STRING, allowNull: true },
   scheduledDate: { type: DataTypes.DATEONLY, allowNull: false },
   scheduledTime: { type: DataTypes.STRING, allowNull: false }, // "HH:MM"
   estimatedDuration: { type: DataTypes.INTEGER, defaultValue: 60 }, // minutes

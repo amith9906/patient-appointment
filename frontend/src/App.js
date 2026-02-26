@@ -39,6 +39,11 @@ import IPD from './pages/IPD';
 import IPDDetail from './pages/IPDDetail';
 import FollowUps from './pages/FollowUps';
 import OT from './pages/OT';
+import Nurses from './pages/Nurses';
+import Shifts from './pages/Shifts';
+import HODDashboard from './pages/HODDashboard';
+import HODLeaves from './pages/HODLeaves';
+import NurseDashboardPage from './pages/NurseDashboard';
 
 // Portals
 import PatientDashboard from './pages/portal/PatientDashboard';
@@ -51,12 +56,15 @@ import AppointmentDetail from './pages/portal/AppointmentDetail';
 import DoctorPatients from './pages/portal/DoctorPatients';
 import LabDashboard from './pages/portal/LabDashboard';
 import LabUpload from './pages/portal/LabUpload';
+import NurseDashboard from './pages/portal/NurseDashboard';
+import NursePatients from './pages/portal/NursePatients';
 
 const ROLE_HOME = {
   super_admin: '/',
   admin: '/',
   receptionist: '/',
   doctor: '/doctor-portal',
+  nurse: '/nurse-portal',
   patient: '/patient-portal',
   lab_technician: '/lab-portal',
 };
@@ -112,7 +120,7 @@ function AppRoutes() {
       <Route path="/appointments" element={<PrivateRoute roles={['super_admin','admin','receptionist']}><Appointments /></PrivateRoute>} />
       <Route path="/queue" element={<PrivateRoute roles={['super_admin','admin','receptionist']}><QueueDisplay /></PrivateRoute>} />
       <Route path="/appointments/:id" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor']}><AppointmentDetail /></PrivateRoute>} />
-      <Route path="/medications" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor','lab_technician']}><Medications /></PrivateRoute>} />
+      <Route path="/medications" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor','lab_technician','nurse']}><Medications /></PrivateRoute>} />
       <Route path="/labs" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor','lab_technician']}><Labs /></PrivateRoute>} />
       <Route path="/lab-report-templates" element={<PrivateRoute roles={['super_admin','admin']}><LabReportTemplates /></PrivateRoute>} />
       <Route path="/reports" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor','lab_technician']}><Reports /></PrivateRoute>} />
@@ -128,10 +136,13 @@ function AppRoutes() {
       <Route path="/corporates" element={<PrivateRoute roles={['super_admin','admin','receptionist']}><CorporateAccounts /></PrivateRoute>} />
       <Route path="/packages" element={<PrivateRoute roles={['super_admin','admin','receptionist']}><PackagePlans /></PrivateRoute>} />
       <Route path="/treatment-plans" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor']}><TreatmentPlans /></PrivateRoute>} />
-      <Route path="/ipd" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor']}><IPD /></PrivateRoute>} />
-      <Route path="/ipd/:id" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor']}><IPDDetail /></PrivateRoute>} />
+      <Route path="/ipd" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor','nurse']}><IPD /></PrivateRoute>} />
+      <Route path="/ipd/:id" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor','nurse']}><IPDDetail /></PrivateRoute>} />
       <Route path="/follow-ups" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor']}><FollowUps /></PrivateRoute>} />
       <Route path="/ot" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor']}><OT /></PrivateRoute>} />
+      <Route path="/nurses" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor']}><Nurses /></PrivateRoute>} />
+      <Route path="/nurse-dashboard" element={<PrivateRoute roles={['super_admin','admin']}><NurseDashboardPage /></PrivateRoute>} />
+      <Route path="/shifts" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor']}><Shifts /></PrivateRoute>} />
 
       {/* Patient Portal */}
       <Route path="/patient-portal" element={<PrivateRoute roles={['patient']}><PatientDashboard /></PrivateRoute>} />
@@ -141,6 +152,8 @@ function AppRoutes() {
 
       {/* Doctor Portal */}
       <Route path="/doctor-portal" element={<PrivateRoute roles={['doctor']}><DoctorDashboard /></PrivateRoute>} />
+      <Route path="/doctor-portal/hod" element={<PrivateRoute roles={['doctor','admin','super_admin']}><HODDashboard /></PrivateRoute>} />
+      <Route path="/doctor-portal/hod/leaves" element={<PrivateRoute roles={['doctor','admin','super_admin']}><HODLeaves /></PrivateRoute>} />
       <Route path="/doctor-portal/appointments" element={<PrivateRoute roles={['doctor']}><DoctorAppointments /></PrivateRoute>} />
       <Route path="/doctor-portal/appointments/:id" element={<PrivateRoute roles={['doctor']}><AppointmentDetail /></PrivateRoute>} />
       <Route path="/doctor-portal/patients" element={<PrivateRoute roles={['doctor']}><DoctorPatients /></PrivateRoute>} />
@@ -148,6 +161,10 @@ function AppRoutes() {
       {/* Lab Tech Portal */}
       <Route path="/lab-portal" element={<PrivateRoute roles={['lab_technician']}><LabDashboard /></PrivateRoute>} />
       <Route path="/lab-portal/upload" element={<PrivateRoute roles={['lab_technician']}><LabUpload /></PrivateRoute>} />
+
+      {/* Nurse Portal */}
+      <Route path="/nurse-portal" element={<PrivateRoute roles={['nurse']}><NurseDashboard /></PrivateRoute>} />
+      <Route path="/nurse-portal/patients" element={<PrivateRoute roles={['nurse']}><NursePatients /></PrivateRoute>} />
 
       <Route path="*" element={<RoleRedirect />} />
     </Routes>

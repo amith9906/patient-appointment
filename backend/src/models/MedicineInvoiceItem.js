@@ -11,10 +11,16 @@ const MedicineInvoiceItem = sequelize.define('MedicineInvoiceItem', {
   unitPrice: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
   discountPct: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 0 },
   taxPct: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 0 },
+  cgstPct: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 0 },
+  sgstPct: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 0 },
   lineSubtotal: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
   lineDiscount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
   lineTax: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+  cgstAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+  sgstAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
   lineTotal: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+  isRestrictedDrug: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  prescriberDoctorName: { type: DataTypes.STRING(140) },
 });
 
 module.exports = MedicineInvoiceItem;

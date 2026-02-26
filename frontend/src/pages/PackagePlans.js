@@ -5,6 +5,7 @@ import Modal from '../components/Modal';
 import SearchableSelect from '../components/SearchableSelect';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
+import useDebouncedFilters from '../hooks/useDebouncedFilters';
 
 const INIT_PLAN = {
   name: '',
@@ -33,6 +34,7 @@ export default function PackagePlans() {
   const [usageSummary, setUsageSummary] = useState(null);
   const [usageLoading, setUsageLoading] = useState(false);
   const [usageFilter, setUsageFilter] = useState({ from: '', to: '', patientId: '' });
+  const { filtersRef, debouncedFilters } = useDebouncedFilters(usageFilter, 400);
 
   const [planModal, setPlanModal] = useState(false);
   const [planSaving, setPlanSaving] = useState(false);
@@ -87,13 +89,14 @@ export default function PackagePlans() {
   useEffect(() => { load(); }, []);
   useEffect(() => { loadPatientContext(patientId); }, [patientId]);
 
-  const loadUsageLog = async (next = usageFilter) => {
+  const loadUsageLog = async (next) => {
     setUsageLoading(true);
     try {
+      const applied = next || filtersRef.current;
       const params = {};
-      if (next.from) params.from = next.from;
-      if (next.to) params.to = next.to;
-      if (next.patientId) params.patientId = next.patientId;
+      if (applied?.from) params.from = applied.from;
+      if (applied?.to) params.to = applied.to;
+      if (applied?.patientId) params.patientId = applied.patientId;
       const res = await packageAPI.getUsageLog(params);
       setUsageLog(res.data?.data || []);
       setUsageSummary(res.data?.summary || null);
@@ -106,7 +109,7 @@ export default function PackagePlans() {
 
   useEffect(() => {
     if (tab === 'usage') loadUsageLog();
-  }, [tab]);
+  }, [tab, debouncedFilters.from, debouncedFilters.to, debouncedFilters.patientId]);
 
   const openNewPlan = () => {
     setEditingPlan(null);

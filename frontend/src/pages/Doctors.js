@@ -111,6 +111,24 @@ export default function Doctors() {
     } catch (err) { toast.error(err?.response?.data?.message || 'Error'); }
   };
 
+  const approveLeave = async (id) => {
+    try {
+      await doctorLeaveAPI.approve(id);
+      toast.success('Leave approved');
+      const r = await doctorLeaveAPI.getAll({ doctorId: leaveDoctor.id });
+      setLeaves(r.data || []);
+    } catch (err) { toast.error(err?.response?.data?.message || 'Error'); }
+  };
+
+  const rejectLeave = async (id) => {
+    try {
+      await doctorLeaveAPI.reject(id);
+      toast.success('Leave rejected');
+      const r = await doctorLeaveAPI.getAll({ doctorId: leaveDoctor.id });
+      setLeaves(r.data || []);
+    } catch (err) { toast.error(err?.response?.data?.message || 'Error'); }
+  };
+
   const deleteLeave = async (id) => {
     if (!window.confirm('Delete this leave?')) return;
     try {
@@ -218,6 +236,15 @@ export default function Doctors() {
     }
   };
 
+  const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+  const isApprover = (doc) => {
+    if (currentUser.role === 'admin' || currentUser.role === 'super_admin') return true;
+    // Check if current user is HOD of the doctor's department
+    // We need to fetch the department to know its HOD. 
+    // For now, we'll rely on the backend check, but we can show buttons if they might be the HOD.
+    return true; // The backend will enforce if they are not actually the HOD
+  };
+
   const filtered = doctors.filter(d => !search || d.name.toLowerCase().includes(search.toLowerCase()) || d.specialization.toLowerCase().includes(search.toLowerCase()));
 
   const columns = [
@@ -285,7 +312,7 @@ export default function Doctors() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ background: '#f8fafc' }}>
-                  {['Date', 'Type', 'Time', 'Reason', ''].map(h => (
+                  {['Date', 'Type', 'Time', 'Reason', 'Status', 'Approver', ''].map(h => (
                     <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, color: '#64748b', fontSize: 11 }}>{h}</th>
                   ))}
                 </tr>
@@ -304,7 +331,22 @@ export default function Doctors() {
                     </td>
                     <td style={{ padding: '8px 12px', color: '#64748b' }}>{l.reason || '—'}</td>
                     <td style={{ padding: '8px 12px' }}>
-                      <button className={styles.btnDelete} onClick={() => deleteLeave(l.id)}>Delete</button>
+                      <Badge 
+                        text={l.status?.toUpperCase() || 'PENDING'} 
+                        type={l.status === 'approved' ? 'active' : l.status === 'rejected' ? 'inactive' : 'warning'} 
+                      />
+                    </td>
+                    <td style={{ padding: '8px 12px', color: '#64748b', fontSize: 11 }}>{l.approvedBy?.name || '—'}</td>
+                    <td style={{ padding: '8px 12px' }}>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        {l.status === 'pending' && isApprover(leaveDoctor) && (
+                          <>
+                            <button className={styles.btnEdit} style={{ padding: '4px 8px', fontSize: 11 }} onClick={() => approveLeave(l.id)}>Approve</button>
+                            <button className={styles.btnDelete} style={{ padding: '4px 8px', fontSize: 11 }} onClick={() => rejectLeave(l.id)}>Reject</button>
+                          </>
+                        )}
+                        <button className={styles.btnDelete} style={{ padding: '4px 8px', fontSize: 11, background: '#94a3b8' }} onClick={() => deleteLeave(l.id)}>Delete</button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -496,7 +538,7 @@ export default function Doctors() {
                 <option value="male">Male</option><option value="female">Female</option><option value="other">Other</option>
               </select>
             </div>
-            <div className={styles.field}><label className={styles.label}>Hospital</label>
+            <div className={styles.field}><label className={styles.label}>Hospital (Optional)</label>
               <SearchableSelect
                 className={styles.input}
                 value={form.hospitalId || ''}
@@ -506,7 +548,7 @@ export default function Doctors() {
                 options={hospitals.map((h) => ({ value: h.id, label: h.name }))}
               />
             </div>
-            <div className={styles.field}><label className={styles.label}>Department</label>
+            <div className={styles.field}><label className={styles.label}>Department (Optional)</label>
               <SearchableSelect
                 className={styles.input}
                 value={form.departmentId || ''}

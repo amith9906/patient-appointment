@@ -1,19 +1,31 @@
 const { Op } = require('sequelize');
-const { sequelize, IPDAdmission, IPDNote, IPDBillItem, IPDPayment, Room, Patient, Doctor, Hospital, PatientPackage, User } = require('../models');
-const { ensureScopedHospital, isSuperAdmin } = require('../utils/accessScope');
+const {
+  sequelize, IPDAdmission, IPDNote, IPDBillItem, IPDPayment, Room, Patient, Doctor,
+  Hospital, PatientPackage, User, Nurse, Shift, NurseShiftAssignment, NursePatientAssignment,
+  Prescription, Medication, MedicationAdministration
+} = require('../models');
+const { ensureScopedHospital, isSuperAdmin, getHODDepartmentId } = require('../utils/accessScope');
 const { getPaginationParams, buildPaginationMeta, applyPaginationOptions } = require('../utils/pagination');
 
 // ─── Billing helper ────────────────────────────────────────────────────────────
 async function recalculateBilling(admissionId) {
+  const admission = await IPDAdmission.findByPk(admissionId);
+  if (!admission) return null;
+
   const [billItems, payments] = await Promise.all([
     IPDBillItem.findAll({ where: { admissionId } }),
     IPDPayment.findAll({ where: { admissionId } }),
   ]);
+
   const billedAmount = billItems.reduce((s, i) => s + parseFloat(i.totalWithGst || 0), 0);
   const paidAmount = payments.reduce((s, p) => s + parseFloat(p.amount || 0), 0);
-  const paymentStatus = billedAmount > 0 && paidAmount >= billedAmount ? 'paid'
+  const discountAmount = parseFloat(admission.discountAmount || 0);
+
+  const netBilled = Math.max(0, billedAmount - discountAmount);
+  const paymentStatus = billedAmount > 0 && paidAmount >= netBilled ? 'paid'
                       : paidAmount > 0 ? 'partial' : 'pending';
-  await IPDAdmission.update({ billedAmount, paidAmount, paymentStatus }, { where: { id: admissionId } });
+
+  await admission.update({ billedAmount, paidAmount, paymentStatus });
   return { billedAmount, paidAmount, paymentStatus };
 }
 
@@ -138,7 +150,7 @@ exports.getStats = async (req, res) => {
     ]);
 
     const pendingResult = await sequelize.query(
-      `SELECT COALESCE(SUM("billedAmount" - "paidAmount"), 0) AS pending FROM "IPDAdmissions" WHERE status = 'admitted'${hospitalId ? ` AND "hospitalId" = '${hospitalId}'` : ''}`,
+      `SELECT COALESCE(SUM("billedAmount" - "discountAmount" - "paidAmount"), 0) AS pending FROM "IPDAdmissions" WHERE status = 'admitted'${hospitalId ? ` AND "hospitalId" = '${hospitalId}'` : ''}`,
       { type: sequelize.QueryTypes.SELECT }
     );
     const pendingDues = parseFloat(pendingResult[0]?.pending || 0);
@@ -267,6 +279,17 @@ exports.getAdmissions = async (req, res) => {
       if (from) where.admissionDate[Op.gte] = from;
       if (to) where.admissionDate[Op.lte] = to;
     }
+
+    // HOD logic: if not super_admin but HOD, filter by department
+    if (!isSuperAdmin(req.user)) {
+      const hodDeptId = await getHODDepartmentId(req.user);
+      if (hodDeptId) {
+        where['$doctor.departmentId$'] = hodDeptId;
+      } else if (req.user.role === 'doctor') {
+        // Regular doctor only sees their own
+        if (!doctorId) where.doctorId = req.user.id;
+      }
+    }
       const pagination = getPaginationParams(req, { defaultPerPage: 20, forcePaginate: req.query.paginate !== 'false' });
       const baseOptions = {
         where,
@@ -306,8 +329,26 @@ exports.getAdmission = async (req, res) => {
         HOSPITAL_INCLUDE,
         {
           model: IPDNote, as: 'ipdNotes',
-          include: [{ model: Doctor, as: 'doctor', attributes: ['id', 'name'] }],
+          include: [
+            { model: Doctor, as: 'doctor', attributes: ['id', 'name'] },
+            { model: Nurse, as: 'nurse', attributes: ['id', 'name'] },
+          ],
           order: [['noteDate', 'DESC']],
+        },
+        {
+          model: NursePatientAssignment, as: 'nurseAssignments',
+          include: [
+            { model: Nurse, as: 'nurse', attributes: ['id', 'name'] },
+            { model: Shift, as: 'shift', attributes: ['id', 'name'] },
+          ],
+          order: [['assignedAt', 'DESC']],
+        },
+        {
+          model: Prescription, as: 'ipdPrescriptions',
+          include: [
+            { model: Medication, as: 'medication', attributes: ['id', 'name'] },
+            { model: MedicationAdministration, as: 'administrations', include: [{ model: Nurse, as: 'nurse', attributes: ['id', 'name'] }] }
+          ]
         },
       ],
     });
@@ -413,20 +454,33 @@ exports.addNote = async (req, res) => {
     }
     const { noteType, content, noteDate } = req.body;
     if (!content) return res.status(400).json({ message: 'Note content is required' });
+    
     let doctorId = req.body.doctorId;
-    if (!doctorId && req.user.role === 'doctor') {
-      const doctor = await Doctor.findOne({ where: { userId: req.user.id } });
-      if (doctor) doctorId = doctor.id;
+    let nurseId = req.body.nurseId;
+
+    if (!doctorId && !nurseId) {
+      if (req.user.role === 'doctor') {
+        const doctor = await Doctor.findOne({ where: { userId: req.user.id } });
+        if (doctor) doctorId = doctor.id;
+      } else if (req.user.role === 'nurse') {
+        const nurse = await Nurse.findOne({ where: { userId: req.user.id } });
+        if (nurse) nurseId = nurse.id;
+      }
     }
-    if (!doctorId) return res.status(400).json({ message: 'doctorId is required' });
+
+    if (!doctorId && !nurseId) return res.status(400).json({ message: 'doctorId or nurseId is required' });
+
     const note = await IPDNote.create({
-      admissionId: admission.id, doctorId, noteType, content,
+      admissionId: admission.id, doctorId, nurseId, noteType, content,
       noteDate: noteDate || new Date(),
     });
-    const withDoctor = await IPDNote.findByPk(note.id, {
-      include: [{ model: Doctor, as: 'doctor', attributes: ['id', 'name'] }],
+    const withDetails = await IPDNote.findByPk(note.id, {
+      include: [
+        { model: Doctor, as: 'doctor', attributes: ['id', 'name'] },
+        { model: Nurse, as: 'nurse', attributes: ['id', 'name'] },
+      ],
     });
-    res.status(201).json(withDoctor);
+    res.status(201).json(withDetails);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -647,9 +701,100 @@ exports.updateDiscount = async (req, res) => {
     const { discountAmount } = req.body;
     const parsed = parseFloat(discountAmount) || 0;
     if (parsed < 0) return res.status(400).json({ message: 'Discount cannot be negative' });
+
     await admission.update({ discountAmount: parsed });
-    const totals = await recalculateBilling(admission.id);
-    res.json({ ...totals, discountAmount: admission.discountAmount });
+    const billing = await recalculateBilling(admission.id);
+    res.json({ message: 'Discount updated', ...billing });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// --- Nurse Assignments ---
+
+exports.assignNurse = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+
+    const admission = await IPDAdmission.findByPk(req.params.id);
+    if (!admission) return res.status(404).json({ message: 'Admission not found' });
+    if (!isSuperAdmin(req.user) && admission.hospitalId !== scope.hospitalId) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    const { nurseId, shiftId, doctorId } = req.body;
+    if (!nurseId) return res.status(400).json({ message: 'nurseId is required' });
+
+    const nurse = await Nurse.findByPk(nurseId);
+    if (!nurse || nurse.hospitalId !== admission.hospitalId) {
+      return res.status(400).json({ message: 'Invalid nurse for this hospital' });
+    }
+
+    const assignment = await NursePatientAssignment.create({
+      nurseId,
+      admissionId: admission.id,
+      shiftId: shiftId || null,
+      doctorId: doctorId || null,
+      assignedAt: new Date(),
+    });
+
+    const withDetails = await NursePatientAssignment.findByPk(assignment.id, {
+      include: [
+        { model: Nurse, as: 'nurse', attributes: ['id', 'name'] },
+        { model: Shift, as: 'shift', attributes: ['id', 'name'] },
+      ],
+    });
+
+    res.status(201).json(withDetails);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.removeNurseAssignment = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+
+    const assignment = await NursePatientAssignment.findByPk(req.params.assignmentId, {
+      include: [{ model: IPDAdmission, as: 'admission' }]
+    });
+
+    if (!assignment) return res.status(404).json({ message: 'Assignment not found' });
+    if (!isSuperAdmin(req.user) && assignment.admission.hospitalId !== scope.hospitalId) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    await assignment.update({ removedAt: new Date() });
+    res.json({ message: 'Nurse unassigned' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.getNursingHistory = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+
+    const admission = await IPDAdmission.findByPk(req.params.id);
+    if (!admission) return res.status(404).json({ message: 'Admission not found' });
+    if (!isSuperAdmin(req.user) && admission.hospitalId !== scope.hospitalId) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    const assignments = await NursePatientAssignment.findAll({
+      where: { admissionId: admission.id },
+      include: [
+        { model: Nurse, as: 'nurse', attributes: ['id', 'name', 'specialization'] },
+        { model: Shift, as: 'shift', attributes: ['id', 'name', 'startTime', 'endTime'] },
+        { model: Doctor, as: 'doctor', attributes: ['id', 'name'] },
+      ],
+      order: [['assignedAt', 'DESC']],
+    });
+
+    res.json(assignments);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

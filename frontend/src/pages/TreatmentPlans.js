@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { treatmentPlanAPI, patientAPI, doctorAPI } from '../services/api';
 import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
 import SearchableSelect from '../components/SearchableSelect';
 import PaginationControls from '../components/PaginationControls';
 import styles from './Page.module.css';
+import useDebouncedFilters from '../hooks/useDebouncedFilters';
 
 const fmt = (n) => `Rs ${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const today = () => new Date().toISOString().slice(0, 10);
@@ -30,6 +31,11 @@ export default function TreatmentPlans() {
   const [planPerPage, setPlanPerPage] = useState(20);
   const [planPagination, setPlanPagination] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
+  const { filtersRef, debouncedFilters } = useDebouncedFilters(filters, 400);
+  const planPageRef = useRef(planPage);
+  const planPerPageRef = useRef(planPerPage);
+  useEffect(() => { planPageRef.current = planPage; }, [planPage]);
+  useEffect(() => { planPerPageRef.current = planPerPage; }, [planPerPage]);
 
   // Form state
   const [form, setForm] = useState(INIT_FORM);
@@ -43,15 +49,16 @@ export default function TreatmentPlans() {
   // Session update
   const [sessionSaving, setSessionSaving] = useState(null);
 
-  const load = useCallback((f = filters) => {
+  const load = useCallback((f) => {
     setLoading(true);
     const params = {
-      page: planPage,
-      per_page: planPerPage,
+      page: planPageRef.current,
+      per_page: planPerPageRef.current,
     };
-    if (f.patientId) params.patientId = f.patientId;
-    if (f.doctorId) params.doctorId = f.doctorId;
-    if (f.status) params.status = f.status;
+    const applied = f || filtersRef.current;
+    if (applied?.patientId) params.patientId = applied.patientId;
+    if (applied?.doctorId) params.doctorId = applied.doctorId;
+    if (applied?.status) params.status = applied.status;
     treatmentPlanAPI.getAll(params)
       .then((r) => {
         setPlans(r.data || []);
@@ -59,7 +66,7 @@ export default function TreatmentPlans() {
       })
       .catch(() => toast.error('Failed to load treatment plans'))
       .finally(() => setLoading(false));
-  }, [filters.patientId, filters.doctorId, filters.status, planPage, planPerPage]);
+  }, []);
 
   useEffect(() => {
     load();
@@ -69,9 +76,17 @@ export default function TreatmentPlans() {
     }
   }, [load]);
 
+  // Reload when page/perPage changes (pagination controls)
+  useEffect(() => {
+    load();
+  }, [load, planPage, planPerPage]);
+
+  // When debounced filters change: reset to page 1 and reload
   useEffect(() => {
     setPlanPage(1);
-  }, [filters.patientId, filters.doctorId, filters.status]);
+    planPageRef.current = 1;
+    load(debouncedFilters);
+  }, [debouncedFilters.patientId, debouncedFilters.doctorId, debouncedFilters.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const applyFilters = () => {
     setPlanPage(1);

@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { appointmentAPI, doctorAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import styles from './Page.module.css';
 import PaginationControls from '../components/PaginationControls';
+import useDebouncedFilters from '../hooks/useDebouncedFilters';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -41,12 +42,17 @@ export default function FollowUps() {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(25);
   const [pagination, setPagination] = useState(null);
+  const { filtersRef, debouncedFilters } = useDebouncedFilters(filters, 400);
+  const pageRef = useRef(page);
+  const perPageRef = useRef(perPage);
+  useEffect(() => { pageRef.current = page; }, [page]);
+  useEffect(() => { perPageRef.current = perPage; }, [perPage]);
 
   const load = useCallback((overrides = {}) => {
     setLoading(true);
-    const targetPage = overrides.page ?? page;
-    const targetPerPage = overrides.perPage ?? perPage;
-    const f = overrides.filters ?? filters;
+    const targetPage = overrides.page ?? pageRef.current;
+    const targetPerPage = overrides.perPage ?? perPageRef.current;
+    const f = overrides.filters ?? filtersRef.current;
     const params = {
       followUp: 'true',
       page: targetPage,
@@ -62,15 +68,19 @@ export default function FollowUps() {
       })
       .catch(() => setAppointments([]))
       .finally(() => setLoading(false));
-  }, [filters, page, perPage]);
+  }, []);
 
+  // Reload when page/perPage changes (pagination controls)
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, page, perPage]);
 
+  // When debounced filters change: reset to page 1 and reload
   useEffect(() => {
     setPage(1);
-  }, [filters.followUpFrom, filters.followUpTo, filters.doctorId]);
+    pageRef.current = 1;
+    load();
+  }, [debouncedFilters.followUpFrom, debouncedFilters.followUpTo, debouncedFilters.doctorId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (user.role !== 'doctor') {

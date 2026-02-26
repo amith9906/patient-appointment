@@ -1,8 +1,40 @@
 const { sequelize, Medication, MedicationBatch, StockLedgerEntry, Hospital } = require('../models');
-const { Op } = require('sequelize');
+const { Op, where: sqlWhere, col } = require('sequelize');
 const { ensureScopedHospital, isSuperAdmin } = require('../utils/accessScope');
 const { getPaginationParams, buildPaginationMeta, applyPaginationOptions } = require('../utils/pagination');
 const round2 = (n) => Number(Number(n || 0).toFixed(2));
+let medicationColumnsCache = null;
+
+const getMedicationColumns = async () => {
+  if (medicationColumnsCache) return medicationColumnsCache;
+  const qi = sequelize.getQueryInterface();
+  try {
+    medicationColumnsCache = await qi.describeTable('Medications');
+  } catch {
+    medicationColumnsCache = {};
+  }
+  return medicationColumnsCache;
+};
+
+const supportsMedicationColumn = async (name) => {
+  const cols = await getMedicationColumns();
+  return Boolean(cols?.[name]);
+};
+
+const getMedicationSelectAttributes = async () => {
+  const cols = await getMedicationColumns();
+  const modelAttrs = Object.keys(Medication.rawAttributes || {});
+  const attrs = modelAttrs.filter((a) => Boolean(cols?.[a]));
+  return attrs.length ? attrs : undefined;
+};
+
+const normalizeInteractions = (value) => {
+  if (Array.isArray(value)) return value.map((x) => String(x || '').trim()).filter(Boolean);
+  if (typeof value === 'string') {
+    return value.split(',').map((x) => x.trim()).filter(Boolean);
+  }
+  return [];
+};
 
 exports.getAll = async (req, res) => {
   try {
@@ -10,6 +42,12 @@ exports.getAll = async (req, res) => {
     if (!scope.allowed) return;
 
     const { hospitalId, category, search, lowStock, stockStatus } = req.query;
+    const medicationAttributes = await getMedicationSelectAttributes();
+    const [hasReorderLevel, hasBarcode, hasLocation] = await Promise.all([
+      supportsMedicationColumn('reorderLevel'),
+      supportsMedicationColumn('barcode'),
+      supportsMedicationColumn('location'),
+    ]);
     const where = { isActive: true };
     if (isSuperAdmin(req.user)) {
       if (hospitalId) where.hospitalId = hospitalId;
@@ -17,17 +55,29 @@ exports.getAll = async (req, res) => {
       where.hospitalId = scope.hospitalId;
     }
     if (category) where.category = category;
-    if (lowStock === 'true') where.stockQuantity = { [Op.lt]: 10 };
+    if (lowStock === 'true') {
+      if (hasReorderLevel) {
+        where[Op.and] = [
+          ...(where[Op.and] || []),
+          sqlWhere(col('stockQuantity'), Op.lt, col('reorderLevel')),
+        ];
+      } else {
+        where.stockQuantity = { [Op.lt]: 10 };
+      }
+    }
     if (search) {
-      where[Op.or] = [
+      const or = [
         { name: { [Op.iLike]: `%${search}%` } },
         { genericName: { [Op.iLike]: `%${search}%` } },
       ];
+      if (hasBarcode) or.push({ barcode: { [Op.iLike]: `%${search}%` } });
+      if (hasLocation) or.push({ location: { [Op.iLike]: `%${search}%` } });
+      where[Op.or] = or;
     }
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const threshold = new Date(today);
-    threshold.setDate(threshold.getDate() + 30);
+    threshold.setDate(threshold.getDate() + 90);
     const todayStr = today.toISOString().split('T')[0];
     const thresholdStr = threshold.toISOString().split('T')[0];
     if (stockStatus === 'expired') {
@@ -37,6 +87,7 @@ exports.getAll = async (req, res) => {
     }
       const pagination = getPaginationParams(req, { defaultPerPage: 25, forcePaginate: req.query.paginate !== 'false' });
       const baseOptions = {
+        attributes: medicationAttributes,
         where,
         include: [{ model: Hospital, as: 'hospital', attributes: ['id', 'name'] }],
         order: [['createdAt', 'DESC']],
@@ -59,7 +110,9 @@ exports.getOne = async (req, res) => {
     const scope = await ensureScopedHospital(req, res);
     if (!scope.allowed) return;
 
+    const medicationAttributes = await getMedicationSelectAttributes();
     const med = await Medication.findByPk(req.params.id, {
+      attributes: medicationAttributes,
       include: [{ model: Hospital, as: 'hospital', attributes: ['id', 'name'] }],
     });
     if (!med) return res.status(404).json({ message: 'Medication not found' });
@@ -80,6 +133,12 @@ exports.create = async (req, res) => {
     }
 
     const payload = { ...req.body };
+    const cols = await getMedicationColumns();
+    if (!cols.location) delete payload.location;
+    if (!cols.reorderLevel) delete payload.reorderLevel;
+    if (!cols.scheduleCategory) delete payload.scheduleCategory;
+    if (!cols.isRestrictedDrug) delete payload.isRestrictedDrug;
+    if (!cols.interactsWith) delete payload.interactsWith;
     if (!isSuperAdmin(req.user)) payload.hospitalId = scope.hospitalId;
     if (!payload.hospitalId) {
       await tx.rollback();
@@ -92,6 +151,10 @@ exports.create = async (req, res) => {
       return res.status(400).json({ message: 'stockQuantity must be a whole number (0 or more)' });
     }
     payload.stockQuantity = openingQty;
+    if (cols.reorderLevel) payload.reorderLevel = Math.max(0, Number(payload.reorderLevel ?? 10));
+    if (cols.scheduleCategory) payload.scheduleCategory = payload.scheduleCategory ? String(payload.scheduleCategory).trim().toLowerCase() : null;
+    if (cols.isRestrictedDrug) payload.isRestrictedDrug = Boolean(payload.isRestrictedDrug || payload.scheduleCategory === 'schedule_h');
+    if (cols.interactsWith) payload.interactsWith = normalizeInteractions(payload.interactsWith);
 
     const med = await Medication.create(payload, { transaction: tx });
 
@@ -143,14 +206,34 @@ exports.update = async (req, res) => {
     const scope = await ensureScopedHospital(req, res);
     if (!scope.allowed) return;
 
-    const med = await Medication.findByPk(req.params.id);
+    const medicationAttributes = await getMedicationSelectAttributes();
+    const med = await Medication.findByPk(req.params.id, { attributes: medicationAttributes });
     if (!med) return res.status(404).json({ message: 'Medication not found' });
     if (!isSuperAdmin(req.user) && med.hospitalId !== scope.hospitalId) {
       return res.status(403).json({ message: 'Access denied for this hospital medication' });
     }
 
     const payload = { ...req.body };
+    const cols = await getMedicationColumns();
+    if (!cols.location) delete payload.location;
+    if (!cols.reorderLevel) delete payload.reorderLevel;
+    if (!cols.scheduleCategory) delete payload.scheduleCategory;
+    if (!cols.isRestrictedDrug) delete payload.isRestrictedDrug;
+    if (!cols.interactsWith) delete payload.interactsWith;
     if (!isSuperAdmin(req.user)) delete payload.hospitalId;
+    if (Object.prototype.hasOwnProperty.call(payload, 'reorderLevel')) {
+      payload.reorderLevel = Math.max(0, Number(payload.reorderLevel || 0));
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'scheduleCategory')) {
+      payload.scheduleCategory = payload.scheduleCategory ? String(payload.scheduleCategory).trim().toLowerCase() : null;
+      if (payload.scheduleCategory === 'schedule_h') payload.isRestrictedDrug = true;
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'isRestrictedDrug')) {
+      payload.isRestrictedDrug = Boolean(payload.isRestrictedDrug);
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'interactsWith')) {
+      payload.interactsWith = normalizeInteractions(payload.interactsWith);
+    }
     await med.update(payload);
     res.json(med);
   } catch (err) { res.status(400).json({ message: err.message }); }
@@ -161,7 +244,8 @@ exports.delete = async (req, res) => {
     const scope = await ensureScopedHospital(req, res);
     if (!scope.allowed) return;
 
-    const med = await Medication.findByPk(req.params.id);
+    const medicationAttributes = await getMedicationSelectAttributes();
+    const med = await Medication.findByPk(req.params.id, { attributes: medicationAttributes });
     if (!med) return res.status(404).json({ message: 'Medication not found' });
     if (!isSuperAdmin(req.user) && med.hospitalId !== scope.hospitalId) {
       return res.status(403).json({ message: 'Access denied for this hospital medication' });
@@ -195,7 +279,9 @@ exports.getExpiryAlerts = async (req, res) => {
       where.hospitalId = scope.hospitalId;
     }
 
+    const medicationAttributes = await getMedicationSelectAttributes();
     const medications = await Medication.findAll({
+      attributes: medicationAttributes,
       where,
       include: [{ model: Hospital, as: 'hospital', attributes: ['id', 'name'] }],
       order: [['expiryDate', 'ASC']],
@@ -238,7 +324,9 @@ exports.getAdvancedAnalytics = async (req, res) => {
     const expiryTill = new Date(today);
     expiryTill.setDate(today.getDate() + expiryDays);
 
+    const medicationAttributes = await getMedicationSelectAttributes();
     const medications = await Medication.findAll({
+      attributes: medicationAttributes,
       where: { hospitalId, isActive: true },
       order: [['name', 'ASC']],
     });
@@ -443,7 +531,8 @@ exports.getBatches = async (req, res) => {
     const scope = await ensureScopedHospital(req, res);
     if (!scope.allowed) return;
 
-    const med = await Medication.findByPk(req.params.id);
+    const medicationAttributes = await getMedicationSelectAttributes();
+    const med = await Medication.findByPk(req.params.id, { attributes: medicationAttributes });
     if (!med) return res.status(404).json({ message: 'Medication not found' });
     if (!isSuperAdmin(req.user) && med.hospitalId !== scope.hospitalId) {
       return res.status(403).json({ message: 'Access denied for this hospital medication' });
@@ -472,7 +561,8 @@ exports.getStockLedger = async (req, res) => {
     const scope = await ensureScopedHospital(req, res);
     if (!scope.allowed) return;
 
-    const med = await Medication.findByPk(req.params.id);
+    const medicationAttributes = await getMedicationSelectAttributes();
+    const med = await Medication.findByPk(req.params.id, { attributes: medicationAttributes });
     if (!med) return res.status(404).json({ message: 'Medication not found' });
     if (!isSuperAdmin(req.user) && med.hospitalId !== scope.hospitalId) {
       return res.status(403).json({ message: 'Access denied for this hospital medication' });
@@ -501,7 +591,8 @@ exports.updateStock = async (req, res) => {
     if (!scope.allowed) return;
 
     const { quantity, operation } = req.body; // operation: 'add' | 'subtract'
-    const med = await Medication.findByPk(req.params.id);
+    const medicationAttributes = await getMedicationSelectAttributes();
+    const med = await Medication.findByPk(req.params.id, { attributes: medicationAttributes });
     if (!med) return res.status(404).json({ message: 'Medication not found' });
     if (!isSuperAdmin(req.user) && med.hospitalId !== scope.hospitalId) {
       return res.status(403).json({ message: 'Access denied for this hospital medication' });

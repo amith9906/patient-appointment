@@ -21,7 +21,13 @@ const IPDAdmission = sequelize.define('IPDAdmission', {
     defaultValue: 'admitted',
   },
   totalAmount: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
+  billedAmount: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
   paidAmount: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
+  discountAmount: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
+  paymentStatus: {
+    type: DataTypes.ENUM('pending', 'partial', 'paid'),
+    defaultValue: 'pending',
+  },
   isPaid: { type: DataTypes.BOOLEAN, defaultValue: false },
   notes: { type: DataTypes.TEXT },
   dischargeNotes: { type: DataTypes.TEXT },

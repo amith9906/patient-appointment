@@ -6,7 +6,11 @@ const IPDBillItem = sequelize.define('IPDBillItem', {
   admissionId: { type: DataTypes.UUID, allowNull: false },
   hospitalId: { type: DataTypes.UUID, allowNull: false },
   itemType: {
-    type: DataTypes.ENUM('room_charges', 'consultation', 'procedure', 'lab_test', 'medication', 'ot_charges', 'nursing', 'equipment', 'other'),
+    type: DataTypes.ENUM(
+      'room_charges', 'consultation', 'procedure', 'lab_test', 
+      'medication', 'ot_charges', 'nursing', 'equipment', 'other',
+      'medicine', 'patient_expense'
+    ),
     defaultValue: 'other',
   },
   description: { type: DataTypes.TEXT, allowNull: false },

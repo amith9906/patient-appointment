@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { labAPI, patientAPI, hospitalAPI } from '../services/api';
 import Modal from '../components/Modal';
 import Table from '../components/Table';
@@ -7,6 +7,7 @@ import SearchableSelect from '../components/SearchableSelect';
 import PaginationControls from '../components/PaginationControls';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
+import useDebouncedFilters from '../hooks/useDebouncedFilters';
 
 const TEST_STATUSES = ['ordered', 'sample_collected', 'processing', 'completed', 'cancelled'];
 const LAB_INIT = { name: '', description: '', phone: '', email: '', floor: '', operatingHours: '', hospitalId: '' };
@@ -27,18 +28,25 @@ export default function Labs() {
   const [testForm, setTestForm] = useState(TEST_INIT);
   const [resultForm, setResultForm] = useState({ result: '', resultValue: '', isAbnormal: false, status: 'completed', technicianNotes: '' });
   const [tab, setTab] = useState('tests');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [filters, setFilters] = useState({ status: '' });
   const [testPage, setTestPage] = useState(1);
   const [testPerPage, setTestPerPage] = useState(25);
   const [testPagination, setTestPagination] = useState(null);
+  const testPageRef = useRef(testPage);
+  const testPerPageRef = useRef(testPerPage);
+  useEffect(() => { testPageRef.current = testPage; }, [testPage]);
+  useEffect(() => { testPerPageRef.current = testPerPage; }, [testPerPage]);
+
+  const { filtersRef, debouncedFilters } = useDebouncedFilters(filters, 400);
 
   const load = useCallback(() => {
     setLoading(true);
     const params = {
-      page: testPage,
-      per_page: testPerPage,
+      page: testPageRef.current,
+      per_page: testPerPageRef.current,
     };
-    if (statusFilter) params.status = statusFilter;
+    const activeFilters = filtersRef.current;
+    if (activeFilters?.status) params.status = activeFilters.status;
     Promise.all([labAPI.getAll(), labAPI.getAllTests(params), patientAPI.getAll({ paginate: 'false' }), hospitalAPI.getAll()])
       .then(([l, t, p, h]) => {
         setLabs(l.data);
@@ -48,15 +56,19 @@ export default function Labs() {
         setHospitals(h.data);
       })
       .finally(() => setLoading(false));
-  }, [statusFilter, testPage, testPerPage]);
+  }, []);
 
+  // Reload when page/perPage changes (pagination controls)
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, testPage, testPerPage]);
 
+  // When debounced filters change: reset to page 1 and reload
   useEffect(() => {
     setTestPage(1);
-  }, [statusFilter]);
+    testPageRef.current = 1;
+    load();
+  }, [debouncedFilters.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleLabSubmit = async (e) => {
     e.preventDefault();
@@ -144,7 +156,7 @@ export default function Labs() {
       {tab === 'tests' && (
         <>
           <div className={styles.filterBar}>
-            <select className={styles.filterSelect} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <select className={styles.filterSelect} value={filters.status} onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value }))}>
               <option value="">All Statuses</option>
               {TEST_STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
             </select>

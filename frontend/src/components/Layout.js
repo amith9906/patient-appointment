@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { medicationAPI, searchAPI } from '../services/api';
+import { medicationAPI, searchAPI, departmentAPI, doctorAPI, nurseAPI, doctorLeaveAPI, nurseLeaveAPI } from '../services/api';
 import styles from './Layout.module.css';
 
 const ICON_BY_KEY = {
@@ -29,6 +29,8 @@ const NAV_BY_ROLE = {
     { path: '/queue', label: 'Token Queue', icon: '🎫' },
     { path: '/ipd', label: 'IPD', icon: '🏨' },
     { path: '/ot', label: 'OT', icon: '🩺' },
+    { path: '/nurses', label: 'Nurses', icon: '👩‍⚕️' },
+    { path: '/shifts', label: 'Shifts', icon: '🕒' },
     { path: '/billing', label: 'Billing', icon: '💰' },
     { path: '/medicine-invoices', label: 'Medicine Invoices', icon: '🧾' },
     { path: '/expenses', label: 'Expenses', icon: '💸' },
@@ -56,6 +58,9 @@ const NAV_BY_ROLE = {
     { path: '/queue', label: 'Token Queue', icon: '🎫' },
     { path: '/ipd', label: 'IPD', icon: '🏨' },
     { path: '/ot', label: 'OT', icon: '🩺' },
+    { path: '/nurse-dashboard', label: 'Nurse Dashboard', icon: '👩‍⚕️' },
+    { path: '/nurses', label: 'Nurses', icon: '👩‍⚕️' },
+    { path: '/shifts', label: 'Shifts', icon: '🕒' },
     { path: '/billing', label: 'Billing', icon: '💰' },
     { path: '/medicine-invoices', label: 'Medicine Invoices', icon: '🧾' },
     { path: '/expenses', label: 'Expenses', icon: '💸' },
@@ -88,7 +93,9 @@ const NAV_BY_ROLE = {
   ],
   doctor: [
     { path: '/doctor-portal', label: 'My Dashboard', icon: '📊' },
+    { path: '/doctor-portal/hod/leaves', label: 'Leave Approvals', icon: 'Calendar' },
     { path: '/doctor-portal/appointments', label: 'My Schedule', icon: 'Calendar' },
+    { path: '/nurse-dashboard', label: 'Nurse Dashboard', icon: '👩‍⚕️' },
     { path: '/follow-ups', label: 'Follow-ups', icon: '🔔' },
     { path: '/doctor-portal/patients', label: 'My Patients', icon: '🧑‍🤝‍🧑' },
     { path: '/labs', label: 'Lab Tests', icon: '🔬' },
@@ -96,6 +103,12 @@ const NAV_BY_ROLE = {
     { path: '/treatment-plans', label: 'Treatment Plans', icon: '📋' },
     { path: '/ipd', label: 'IPD', icon: '🏨' },
     { path: '/ot', label: 'OT', icon: '🩺' },
+  ],
+  nurse: [
+    { path: '/nurse-portal', label: 'Duty Dashboard', icon: '🏥' },
+    { path: '/nurse-portal/patients', label: 'My Patients', icon: '🧑‍🤝‍🧑' },
+    { path: '/ipd', label: 'IPD Management', icon: '🏨' },
+    { path: '/medications', label: 'Medications', icon: 'Rx' },
   ],
   patient: [
     { path: '/patient-portal', label: 'My Dashboard', icon: '🏠' },
@@ -122,6 +135,8 @@ export default function Layout({ children }) {
   const handleLogout = () => { logout(); navigate('/login'); };
 
   const [expiryAlerts, setExpiryAlerts] = useState([]);
+  const [pendingLeaveAlerts, setPendingLeaveAlerts] = useState([]);
+  const [isHOD, setIsHOD] = useState(false);
   const [bellOpen, setBellOpen] = useState(false);
   const bellRef = useRef(null);
 
@@ -173,6 +188,52 @@ export default function Layout({ children }) {
       .catch(() => {});
   }, [user.role]);
 
+  useEffect(() => {
+    if (user.role !== 'doctor') return;
+    const loadPending = async () => {
+      try {
+        const depRes = await departmentAPI.getAll();
+        const myDepts = (depRes.data || []).filter((d) => String(d.hod?.id || '') === String(user.id));
+        setIsHOD(myDepts.length > 0);
+        if (myDepts.length === 0) {
+          setPendingLeaveAlerts([]);
+          return;
+        }
+
+        const docIds = new Set();
+        const nurseIds = new Set();
+        for (const d of myDepts) {
+          // eslint-disable-next-line no-await-in-loop
+          const [dr, nr] = await Promise.all([
+            doctorAPI.getAll({ departmentId: d.id }),
+            nurseAPI.getAll({ departmentId: d.id }),
+          ]);
+          (dr.data || []).forEach((x) => docIds.add(x.id));
+          (nr.data || []).forEach((x) => nurseIds.add(x.id));
+        }
+
+        const [docLeaves, nurseLeaves] = await Promise.all([
+          doctorLeaveAPI.getAll({ status: 'pending' }),
+          nurseLeaveAPI.getAll({ status: 'pending' }),
+        ]);
+
+        const alerts = [];
+        (docLeaves.data || []).forEach((l) => {
+          if (!docIds.has(l.doctorId)) return;
+          alerts.push({ id: `doc-${l.id}`, name: l.doctor?.name || 'Doctor', leaveDate: l.leaveDate, type: 'doctor' });
+        });
+        (nurseLeaves.data || []).forEach((l) => {
+          if (!nurseIds.has(l.nurseId)) return;
+          alerts.push({ id: `nurse-${l.id}`, name: l.nurse?.name || 'Nurse', leaveDate: l.leaveDate, type: 'nurse' });
+        });
+        setPendingLeaveAlerts(alerts.sort((a, b) => String(a.leaveDate).localeCompare(String(b.leaveDate))));
+      } catch {
+        setPendingLeaveAlerts([]);
+      }
+    };
+    loadPending();
+  }, [user.role, user.id, location.pathname]);
+
   // Close bell dropdown on outside click
   useEffect(() => {
     if (!bellOpen) return;
@@ -182,8 +243,10 @@ export default function Layout({ children }) {
   }, [bellOpen]);
 
   const isActive = (path) => {
-    if (['/','doctor-portal','/patient-portal','/lab-portal'].includes(path)) return location.pathname === path;
-    return location.pathname.startsWith(path);
+    if (['/', '/doctor-portal', '/patient-portal', '/lab-portal'].includes(path)) {
+      return location.pathname === path;
+    }
+    return location.pathname === path || location.pathname.startsWith(`${path}/`);
   };
 
   return (
@@ -324,42 +387,82 @@ export default function Layout({ children }) {
                 )}
               </div>
             )}
-            {['super_admin', 'admin'].includes(user.role) && (
+            {(['super_admin', 'admin'].includes(user.role) || (user.role === 'doctor' && isHOD)) && (
               <div className={styles.bellWrap} ref={bellRef}>
-                <button className={styles.bellBtn} onClick={() => setBellOpen((v) => !v)} title="Expiry Alerts">
+                <button className={styles.bellBtn} onClick={() => setBellOpen((v) => !v)} title={user.role === 'doctor' ? 'Leave Approvals' : 'Expiry Alerts'}>
                   🔔
-                  {expiryAlerts.length > 0 && (
-                    <span className={styles.bellBadge}>{expiryAlerts.length > 99 ? '99+' : expiryAlerts.length}</span>
+                  {((user.role === 'doctor' ? pendingLeaveAlerts.length : expiryAlerts.length) > 0) && (
+                    <span className={styles.bellBadge}>
+                      {(user.role === 'doctor' ? pendingLeaveAlerts.length : expiryAlerts.length) > 99
+                        ? '99+'
+                        : (user.role === 'doctor' ? pendingLeaveAlerts.length : expiryAlerts.length)}
+                    </span>
                   )}
                 </button>
                 {bellOpen && (
                   <div className={styles.bellDropdown}>
-                    <div className={styles.bellTitle}>
-                      Warning️ Expiry Alerts - {expiryAlerts.length} medicine{expiryAlerts.length !== 1 ? 's' : ''}
-                    </div>
-                    {expiryAlerts.length === 0 ? (
-                      <div style={{ padding: '12px 16px', fontSize: 13, color: '#64748b' }}>No medicines expiring within 30 days</div>
-                    ) : (
-                      expiryAlerts.slice(0, 6).map((m) => (
-                        <div key={m.id} className={styles.bellItem}>
-                          <span className={styles.bellItemName}>{m.name}</span>
-                          <span style={{
-                            color: m.daysRemaining < 0 ? '#dc2626' : m.daysRemaining < 7 ? '#dc2626' : '#d97706',
-                            fontSize: 12, fontWeight: 600, flexShrink: 0, marginLeft: 8,
-                          }}>
-                            {m.daysRemaining < 0 ? 'EXPIRED' : m.daysRemaining === 0 ? 'Today' : `${m.daysRemaining}d left`}
-                          </span>
+                    {user.role === 'doctor' ? (
+                      <>
+                        <div className={styles.bellTitle}>
+                          Pending Leave Requests - {pendingLeaveAlerts.length}
                         </div>
-                      ))
+                        {pendingLeaveAlerts.length === 0 ? (
+                          <div style={{ padding: '12px 16px', fontSize: 13, color: '#64748b' }}>No pending doctor/nurse leave requests.</div>
+                        ) : (
+                          pendingLeaveAlerts.slice(0, 6).map((a) => (
+                            <div key={a.id} className={styles.bellItem}>
+                              <span className={styles.bellItemName}>{a.name}</span>
+                              <span style={{
+                                color: '#64748b',
+                                fontSize: 12,
+                                fontWeight: 600,
+                                flexShrink: 0,
+                                marginLeft: 8,
+                              }}>
+                                {a.type} - {a.leaveDate}
+                              </span>
+                            </div>
+                          ))
+                        )}
+                        {pendingLeaveAlerts.length > 6 && (
+                          <div style={{ padding: '6px 16px', fontSize: 12, color: '#94a3b8' }}>
+                            +{pendingLeaveAlerts.length - 6} more requests
+                          </div>
+                        )}
+                        <Link to="/doctor-portal/hod/leaves" className={styles.bellViewAll} onClick={() => setBellOpen(false)}>
+                          Open Leave Approval Panel {'->'}
+                        </Link>
+                      </>
+                    ) : (
+                      <>
+                        <div className={styles.bellTitle}>
+                          Warning️ Expiry Alerts - {expiryAlerts.length} medicine{expiryAlerts.length !== 1 ? 's' : ''}
+                        </div>
+                        {expiryAlerts.length === 0 ? (
+                          <div style={{ padding: '12px 16px', fontSize: 13, color: '#64748b' }}>No medicines expiring within 30 days</div>
+                        ) : (
+                          expiryAlerts.slice(0, 6).map((m) => (
+                            <div key={m.id} className={styles.bellItem}>
+                              <span className={styles.bellItemName}>{m.name}</span>
+                              <span style={{
+                                color: m.daysRemaining < 0 ? '#dc2626' : m.daysRemaining < 7 ? '#dc2626' : '#d97706',
+                                fontSize: 12, fontWeight: 600, flexShrink: 0, marginLeft: 8,
+                              }}>
+                                {m.daysRemaining < 0 ? 'EXPIRED' : m.daysRemaining === 0 ? 'Today' : `${m.daysRemaining}d left`}
+                              </span>
+                            </div>
+                          ))
+                        )}
+                        {expiryAlerts.length > 6 && (
+                          <div style={{ padding: '6px 16px', fontSize: 12, color: '#94a3b8' }}>
+                            +{expiryAlerts.length - 6} more medicines
+                          </div>
+                        )}
+                        <Link to="/medications" className={styles.bellViewAll} onClick={() => setBellOpen(false)}>
+                          View All Expiry Alerts {'->'}
+                        </Link>
+                      </>
                     )}
-                    {expiryAlerts.length > 6 && (
-                      <div style={{ padding: '6px 16px', fontSize: 12, color: '#94a3b8' }}>
-                        +{expiryAlerts.length - 6} more medicines
-                      </div>
-                    )}
-                    <Link to="/medications" className={styles.bellViewAll} onClick={() => setBellOpen(false)}>
-                      View All Expiry Alerts {'->'}
-                    </Link>
                   </div>
                 )}
               </div>
@@ -378,3 +481,5 @@ export default function Layout({ children }) {
     </div>
   );
 }
+
+

@@ -68,8 +68,8 @@ export default function SearchableSelect({
       />
       <datalist id={listId}>
         {allowEmpty && <option value={emptyLabel} />}
-        {normalized.map((o) => (
-          <option key={o.value} value={o.label} />
+        {normalized.map((o, index) => (
+          <option key={`${o.value}-${index}`} value={o.label} />
         ))}
       </datalist>
     </>

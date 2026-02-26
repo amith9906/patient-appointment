@@ -13,6 +13,7 @@ const Prescription = sequelize.define('Prescription', {
   instructionsOriginal: { type: DataTypes.TEXT, comment: 'Doctor-entered original note language' },
   translatedInstructions: { type: DataTypes.JSONB, allowNull: true, comment: 'Map of languageCode => translated note' },
   quantity: { type: DataTypes.INTEGER, defaultValue: 1 },
+  admissionId: { type: DataTypes.UUID, allowNull: true },
 });
 
 module.exports = Prescription;

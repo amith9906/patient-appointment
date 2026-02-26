@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { departmentAPI, hospitalAPI } from '../services/api';
+import { departmentAPI, hospitalAPI, doctorAPI } from '../services/api';
 import Modal from '../components/Modal';
 import Table from '../components/Table';
 import Badge from '../components/Badge';
@@ -7,11 +7,12 @@ import SearchableSelect from '../components/SearchableSelect';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
 
-const INIT = { name: '', description: '', floor: '', hospitalId: '' };
+const INIT = { name: '', description: '', floor: '', hospitalId: '', hodUserId: '' };
 
 export default function Departments() {
   const [departments, setDepartments] = useState([]);
   const [hospitals, setHospitals] = useState([]);
+  const [doctors, setDoctors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -21,8 +22,16 @@ export default function Departments() {
   const load = () => {
     setLoading(true);
     const params = hospitalFilter ? { hospitalId: hospitalFilter } : {};
-    Promise.all([departmentAPI.getAll(params), hospitalAPI.getAll()])
-      .then(([d, h]) => { setDepartments(d.data); setHospitals(h.data); })
+    Promise.all([
+      departmentAPI.getAll(params),
+      hospitalAPI.getAll(),
+      doctorAPI.getAll({ hospitalId: hospitalFilter, limit: 1000 })
+    ])
+      .then(([d, h, dr]) => { 
+        setDepartments(d.data); 
+        setHospitals(h.data); 
+        setDoctors(dr.data); 
+      })
       .finally(() => setLoading(false));
   };
   useEffect(load, [hospitalFilter]);
@@ -50,6 +59,7 @@ export default function Departments() {
   const columns = [
     { key: 'name', label: 'Department Name', render: (v) => <div style={{ fontWeight: 600 }}>{v}</div> },
     { key: 'hospital', label: 'Hospital', render: (v) => v.name || '-' },
+    { key: 'hod', label: 'HOD', render: (v) => v ? v.name : '-' },
     { key: 'floor', label: 'Floor' },
     { key: 'description', label: 'Description', render: (v) => v ? v.slice(0, 60) + (v.length > 60 ? '...' : '') : '-' },
     { key: 'isActive', label: 'Status', render: (v) => <Badge text={v ? 'Active' : 'Inactive'} type={v ? 'active' : 'inactive'} /> },
@@ -95,6 +105,16 @@ export default function Departments() {
               />
             </div>
             <div className={styles.field}><label className={styles.label}>Floor</label><input className={styles.input} value={form.floor || ''} onChange={(e) => set('floor', e.target.value)} placeholder="e.g. 2nd Floor, Wing B" /></div>
+            <div className={styles.field}><label className={styles.label}>Head of Department (HOD) (Optional)</label>
+              <SearchableSelect
+                className={styles.input}
+                value={form.hodUserId || ''}
+                onChange={(value) => set('hodUserId', value)}
+                options={doctors.map((d) => ({ value: d.userId, label: d.name }))}
+                placeholder="Search doctor..."
+                emptyLabel="Select HOD"
+              />
+            </div>
             <div className={styles.field}><label className={styles.label}>Description</label><textarea className={styles.input} rows={3} value={form.description || ''} onChange={(e) => set('description', e.target.value)} /></div>
           </div>
           <div className={styles.formActions}>

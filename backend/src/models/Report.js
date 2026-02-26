@@ -15,6 +15,7 @@ const Report = sequelize.define('Report', {
   mimeType: { type: DataTypes.STRING },
   description: { type: DataTypes.TEXT },
   uploadedBy: { type: DataTypes.STRING },
+  invoiceId: { type: DataTypes.UUID, allowNull: true },
   isActive: { type: DataTypes.BOOLEAN, defaultValue: true },
   labTestId: { type: DataTypes.UUID, allowNull: true },
 });

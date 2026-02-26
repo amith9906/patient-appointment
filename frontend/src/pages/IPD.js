@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ipdAPI, patientAPI, doctorAPI } from '../services/api';
 import { toast } from 'react-toastify';
@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import SearchableSelect from '../components/SearchableSelect';
 import PaginationControls from '../components/PaginationControls';
 import styles from './Page.module.css';
+import useDebouncedValue from '../hooks/useDebouncedValue';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -41,9 +42,16 @@ export default function IPD() {
   const [admissions, setAdmissions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({ status: '', from: '', to: '' });
+  const filtersRef = useRef(filters);
+  useEffect(() => { filtersRef.current = filters; }, [filters]);
+  const debouncedFilters = useDebouncedValue(filters, 400);
   const [admissionPage, setAdmissionPage] = useState(1);
   const [admissionPerPage, setAdmissionPerPage] = useState(20);
   const [admissionPagination, setAdmissionPagination] = useState(null);
+  const admissionPageRef = useRef(admissionPage);
+  const admissionPerPageRef = useRef(admissionPerPage);
+  useEffect(() => { admissionPageRef.current = admissionPage; }, [admissionPage]);
+  useEffect(() => { admissionPerPageRef.current = admissionPerPage; }, [admissionPerPage]);
   const [stats, setStats] = useState({
     totalAdmitted: 0, dischargedToday: 0, totalRooms: 0, occupiedRooms: 0,
     occupancyRate: 0, totalBeds: 0, availableBeds: 0,
@@ -70,15 +78,16 @@ export default function IPD() {
     ipdAPI.getStats().then(r => setStats(r.data || {})).catch(() => {});
   };
 
-  const loadAdmissions = useCallback((f = filters) => {
+  const loadAdmissions = useCallback((f) => {
     setLoading(true);
     const params = {
-      page: admissionPage,
-      per_page: admissionPerPage,
+      page: admissionPageRef.current,
+      per_page: admissionPerPageRef.current,
     };
-    if (f.status) params.status = f.status;
-    if (f.from) params.from = f.from;
-    if (f.to) params.to = f.to;
+    const applied = f || filtersRef.current;
+    if (applied?.status) params.status = applied.status;
+    if (applied?.from) params.from = applied.from;
+    if (applied?.to) params.to = applied.to;
     ipdAPI.getAdmissions(params)
       .then((r) => {
         setAdmissions(r.data || []);
@@ -86,7 +95,7 @@ export default function IPD() {
       })
       .catch(() => toast.error('Failed to load admissions'))
       .finally(() => setLoading(false));
-  }, [filters.status, filters.from, filters.to, admissionPage, admissionPerPage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadRooms = () => {
     setRoomsLoading(true);
@@ -94,17 +103,24 @@ export default function IPD() {
   };
 
   useEffect(() => {
-    loadAdmissions();
     loadStats();
     patientAPI.getAll({ paginate: 'false' }).then((r) => setPatients(r.data?.patients || r.data || [])).catch(() => {});
     if (user.role !== 'doctor') {
       doctorAPI.getAll().then((r) => setDoctors(r.data?.doctors || r.data || [])).catch(() => {});
     }
-  }, [loadAdmissions]);
+  }, []);
 
+  // Reload when page/perPage changes (pagination controls)
+  useEffect(() => {
+    loadAdmissions();
+  }, [loadAdmissions, admissionPage, admissionPerPage]);
+
+  // When debounced filters change: reset to page 1 and reload
   useEffect(() => {
     setAdmissionPage(1);
-  }, [filters.status, filters.from, filters.to]);
+    admissionPageRef.current = 1;
+    loadAdmissions(debouncedFilters);
+  }, [debouncedFilters]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (tab === 'rooms') loadRooms();

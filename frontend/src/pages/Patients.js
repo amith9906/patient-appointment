@@ -8,6 +8,7 @@ import SearchableSelect from '../components/SearchableSelect';
 import PaginationControls from '../components/PaginationControls';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
+import useDebouncedFilters from '../hooks/useDebouncedFilters';
 
 const INIT = {
   name: '', dateOfBirth: '', gender: 'male', bloodGroup: '', phone: '', email: '', address: '', city: '', state: '',
@@ -32,10 +33,14 @@ export default function Patients() {
   const [bulkModal, setBulkModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(INIT);
-  const [search, setSearch] = useState('');
+  const [filters, setFilters] = useState({ search: '' });
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(25);
   const [patientPagination, setPatientPagination] = useState(null);
+  const pageRef = useRef(page);
+  const perPageRef = useRef(perPage);
+  useEffect(() => { pageRef.current = page; }, [page]);
+  useEffect(() => { perPageRef.current = perPage; }, [perPage]);
   const navigate = useNavigate();
 
   // Bulk upload state
@@ -54,18 +59,20 @@ export default function Patients() {
       .catch(() => setHospitals([]));
   }, []);
 
+  const { filtersRef, debouncedFilters } = useDebouncedFilters(filters, 400);
+
   const fetchPatients = useCallback(
     async (overrides = {}) => {
       setLoading(true);
       try {
-        const targetPage = overrides.page ?? page;
-        const targetPerPage = overrides.perPage ?? perPage;
-        const trimmedSearch = (overrides.search ?? search).trim();
+        const targetPage = overrides.page ?? pageRef.current;
+        const targetPerPage = overrides.perPage ?? perPageRef.current;
+        const targetSearch = (overrides.search ?? filtersRef.current?.search ?? '').trim();
         const params = {
           page: targetPage,
           per_page: targetPerPage,
         };
-        if (trimmedSearch) params.search = trimmedSearch;
+        if (targetSearch) params.search = targetSearch;
         const res = await patientAPI.getAll(params);
         setPatients(res.data);
         setPatientPagination(res.pagination || null);
@@ -75,17 +82,24 @@ export default function Patients() {
         setLoading(false);
       }
     },
-    [page, perPage, search],
+    [],
   );
 
   useEffect(() => {
     fetchHospitals();
   }, [fetchHospitals]);
 
+  // Reload when page/perPage changes (pagination controls)
   useEffect(() => {
-    const timer = setTimeout(() => fetchPatients(), 350);
-    return () => clearTimeout(timer);
-  }, [fetchPatients]);
+    fetchPatients();
+  }, [fetchPatients, page, perPage]);
+
+  // When debounced search changes: reset to page 1 and reload
+  useEffect(() => {
+    setPage(1);
+    pageRef.current = 1;
+    fetchPatients({ search: debouncedFilters.search || '' });
+  }, [debouncedFilters.search]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (modal && !editing && !form.hospitalId && hospitals.length > 0) {
@@ -153,7 +167,7 @@ export default function Patients() {
 
   const set = (k, v) => setForm({ ...form, [k]: v });
   const handleSearchChange = (value) => {
-    setSearch(value);
+    setFilters((prev) => ({ ...prev, search: value }));
     setPage(1);
   };
   const toggleListValue = (key, value) => {
@@ -190,7 +204,7 @@ export default function Patients() {
         </div>
       </div>
       <div className={styles.filterBar}>
-        <input className={styles.searchInput} placeholder="Search by name, ID, or phone..." value={search} onChange={(e) => handleSearchChange(e.target.value)} />
+        <input className={styles.searchInput} placeholder="Search by name, ID, or phone..." value={filters.search} onChange={(e) => handleSearchChange(e.target.value)} />
       </div>
       <div className={styles.card}>
         <Table columns={columns} data={patients} loading={loading} />

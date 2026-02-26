@@ -1,4 +1,4 @@
-const { Doctor, Patient } = require('../models');
+const { Doctor, Patient, Department, Nurse } = require('../models');
 
 const isSuperAdmin = (user) => user?.role === 'super_admin';
 
@@ -9,6 +9,11 @@ const getUserHospitalId = async (user) => {
   if (user.role === 'doctor') {
     const doctor = await Doctor.findOne({ where: { userId: user.id }, attributes: ['hospitalId'] });
     return doctor?.hospitalId || null;
+  }
+
+  if (user.role === 'nurse') {
+    const nurse = await Nurse.findOne({ where: { userId: user.id }, attributes: ['hospitalId'] });
+    return nurse?.hospitalId || null;
   }
 
   if (user.role === 'patient') {
@@ -31,8 +36,15 @@ const ensureScopedHospital = async (req, res) => {
   return { allowed: true, hospitalId };
 };
 
+const getHODDepartmentId = async (user) => {
+  if (!user) return null;
+  const dept = await Department.findOne({ where: { hodUserId: user.id }, attributes: ['id'] });
+  return dept?.id || null;
+};
+
 module.exports = {
   isSuperAdmin,
   getUserHospitalId,
   ensureScopedHospital,
+  getHODDepartmentId,
 };

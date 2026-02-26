@@ -6,7 +6,7 @@ const { Medication, Patient } = require('../models');
 const MED_HEADERS = [
   'name', 'genericName', 'composition', 'category', 'dosage', 'manufacturer',
   'description', 'sideEffects', 'contraindications', 'stockQuantity', 'unitPrice',
-  'expiryDate', 'requiresPrescription',
+  'expiryDate', 'requiresPrescription', 'scheduleCategory', 'isRestrictedDrug',
 ];
 
 const MED_SAMPLE = [
@@ -16,6 +16,7 @@ const MED_SAMPLE = [
     manufacturer: 'Generic Pharma', description: 'Pain reliever and fever reducer',
     sideEffects: 'Nausea, stomach upset', contraindications: 'Liver disease',
     stockQuantity: 100, unitPrice: 2.50, expiryDate: '2026-12-31', requiresPrescription: 'no',
+    scheduleCategory: 'otc', isRestrictedDrug: 'no',
   },
   {
     name: 'Amoxicillin 250mg', genericName: 'Amoxicillin',
@@ -23,6 +24,7 @@ const MED_SAMPLE = [
     manufacturer: 'MediCorp', description: 'Broad-spectrum antibiotic',
     sideEffects: 'Diarrhea, nausea, rash', contraindications: 'Penicillin allergy',
     stockQuantity: 50, unitPrice: 5.00, expiryDate: '2026-06-30', requiresPrescription: 'yes',
+    scheduleCategory: 'otc', isRestrictedDrug: 'no',
   },
   {
     name: 'Metformin 500mg', genericName: 'Metformin HCl',
@@ -30,6 +32,7 @@ const MED_SAMPLE = [
     manufacturer: 'DiaPharma', description: 'Type 2 diabetes management',
     sideEffects: 'GI upset, metallic taste', contraindications: 'Renal impairment',
     stockQuantity: 200, unitPrice: 1.20, expiryDate: '2027-03-31', requiresPrescription: 'yes',
+    scheduleCategory: 'otc', isRestrictedDrug: 'no',
   },
 ];
 
@@ -47,6 +50,8 @@ const MED_NOTES = [
   { Field: 'unitPrice', Required: 'no', AllowedValues: '', Notes: 'Decimal. Default: 0' },
   { Field: 'expiryDate', Required: 'no', AllowedValues: '', Notes: 'YYYY-MM-DD format' },
   { Field: 'requiresPrescription', Required: 'no', AllowedValues: 'yes | no', Notes: 'Default: yes' },
+  { Field: 'scheduleCategory', Required: 'no', AllowedValues: 'otc | schedule_h | schedule_h1', Notes: 'Regulatory schedule category (Default: otc)' },
+  { Field: 'isRestrictedDrug', Required: 'no', AllowedValues: 'yes | no', Notes: 'If yes, prescriber details are required at sale. If scheduleCategory starts with schedule_h, this will be inferred.' },
 ];
 
 // ─── Patient template ──────────────────────────────────────────────────────
@@ -149,6 +154,9 @@ exports.uploadMedications = async (req, res) => {
       const category = VALID_CATS.includes(String(r.category || '').toLowerCase())
         ? String(r.category).toLowerCase() : 'tablet';
       const requiresPrescription = String(r.requiresPrescription || '').toLowerCase() !== 'no';
+      const scheduleCategory = r.scheduleCategory ? String(r.scheduleCategory).trim().toLowerCase() : 'otc';
+      const isRestrictedFromCol = String(r.isRestrictedDrug || '').toLowerCase() === 'yes';
+      const isRestrictedDrug = isRestrictedFromCol || (scheduleCategory && scheduleCategory.startsWith('schedule_h'));
 
       try {
         await Medication.create({
@@ -165,6 +173,8 @@ exports.uploadMedications = async (req, res) => {
           unitPrice: parseFloat(r.unitPrice) || 0,
           expiryDate: r.expiryDate || null,
           requiresPrescription,
+          scheduleCategory: scheduleCategory || null,
+          isRestrictedDrug: Boolean(isRestrictedDrug),
           hospitalId: hospitalId || null,
         });
         results.created++;
