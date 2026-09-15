@@ -12,6 +12,10 @@ const MedicineInvoice = sequelize.define('MedicineInvoice', {
   subtotal: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
   discountAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
   taxAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+  cgstAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+  sgstAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+  igstAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+  isInterstate: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   totalAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
   paymentMode: {
     type: DataTypes.ENUM('cash', 'upi', 'card', 'net_banking', 'insurance', 'other'),

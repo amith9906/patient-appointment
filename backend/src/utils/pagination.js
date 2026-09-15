@@ -21,7 +21,8 @@ const hasPaginationParams = (query = {}) => {
   );
 };
 
-const getPaginationParams = (query = {}, overrides = {}) => {
+const getPaginationParams = (input = {}, overrides = {}) => {
+  const query = input && input.query ? input.query : (input || {});
   const wantsPagination = overrides.forcePaginate || hasPaginationParams(query);
   if (!wantsPagination) return null;
   const page = parsePositiveInt(

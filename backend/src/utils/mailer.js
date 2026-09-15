@@ -1,5 +1,9 @@
-const nodemailer = require('nodemailer');
-const { Resend } = require('resend');
+let Resend;
+try {
+  Resend = require('resend').Resend;
+} catch (e) {
+  Resend = null;
+}
 
 const hasSmtpConfig = () => (
   !!process.env.SMTP_HOST
@@ -18,7 +22,7 @@ const getTransporter = () => nodemailer.createTransport({
   },
 });
 
-const resendClient = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+const resendClient = (Resend && process.env.RESEND_API_KEY) ? new Resend(process.env.RESEND_API_KEY) : null;
 
 const formatFromAddress = () => process.env.FROM_EMAIL || process.env.SMTP_USER || 'onboarding@resend.dev';
 

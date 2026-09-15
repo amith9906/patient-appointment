@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   ResponsiveContainer,
   CartesianGrid,
@@ -6,6 +6,7 @@ import {
   XAxis,
   YAxis,
   Legend,
+  LineChart,
   Line,
   BarChart,
   Bar,
@@ -553,7 +554,7 @@ export default function MedicineInvoices() {
   const getMedicationSearchText = (item) => {
     if (item.medicationSearch && !item.medicationId) return item.medicationSearch;
     const selected = medications.find((m) => m.id === item.medicationId);
-    if (selected) return medicationOptionLabel(selected);
+    if (selected) return selected.name;
     return item.medicationSearch || '';
   };
 
@@ -1812,21 +1813,22 @@ export default function MedicineInvoices() {
             </div>
 
             <div className={styles.card} style={{ padding: 12, marginBottom: 16, border: '1px solid #e2e8f0' }}>
-              <div style={{ fontWeight: 600, marginBottom: 10 }}>Medicine Items</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr auto', gap: 8, marginBottom: 4 }}>
+              <div style={{ fontWeight: 600, marginBottom: 10 }}>Medicine Items</div>              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 2.2fr) minmax(180px, 1.8fr) minmax(90px, 1fr) minmax(80px, 0.9fr) minmax(80px, 0.9fr) minmax(110px, 1.2fr) auto', gap: 8, marginBottom: 6 }}>
                 <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>Medicine</div>
-                <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>Qty</div>
+                <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>Qty & Quick Add</div>
                 <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>Unit Price</div>
                 <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>Discount %</div>
                 <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>GST %</div>
+                <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>Amount (Total)</div>
                 <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>Actions</div>
               </div>
               {form.items.map((item, index) => {
                 const selMed = medications.find((m) => m.id === item.medicationId);
+                const computedRow = computed.rows?.[index];
                 return (
-                  <div key={index} style={{ marginBottom: 8 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr auto', gap: 8 }}>
-                      <>
+                  <div key={index} style={{ marginBottom: 10 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 2.2fr) minmax(180px, 1.8fr) minmax(90px, 1fr) minmax(80px, 0.9fr) minmax(80px, 0.9fr) minmax(110px, 1.2fr) auto', gap: 8, alignItems: 'center' }}>
+                      <div>
                         <input
                           className={styles.input}
                           list={`medicine-options-${index}`}
@@ -1839,28 +1841,63 @@ export default function MedicineInvoices() {
                             <option key={`${m.id}-${label}`} value={label} />
                           )))}
                         </datalist>
-                      </>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <input className={styles.input} type="number" min="1" step="1" value={item.quantity} onChange={(e) => setItem(index, 'quantity', e.target.value)} placeholder="Qty" />
-                        <button type="button" className={styles.btnSecondary} onClick={() => adjustItemQuantity(index, -1)}>-1</button>
-                        <button type="button" className={styles.btnSecondary} onClick={() => adjustItemQuantity(index, 1)}>+1</button>
-                        <button type="button" className={styles.btnSecondary} onClick={() => adjustItemQuantity(index, 5)}>+5</button>
+                      </div>
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <input
+                          className={styles.input}
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={item.quantity}
+                          onChange={(e) => setItem(index, 'quantity', e.target.value)}
+                          placeholder="Qty"
+                          style={{ minWidth: '65px', width: '70px', flexShrink: 0, textAlign: 'center', fontWeight: 700 }}
+                        />
+                        <button type="button" className={styles.btnSecondary} style={{ padding: '4px 6px', fontSize: 11 }} onClick={() => adjustItemQuantity(index, -1)}>-1</button>
+                        <button type="button" className={styles.btnSecondary} style={{ padding: '4px 6px', fontSize: 11 }} onClick={() => adjustItemQuantity(index, 1)}>+1</button>
+                        <button type="button" className={styles.btnSecondary} style={{ padding: '4px 6px', fontSize: 11 }} onClick={() => adjustItemQuantity(index, 5)}>+5</button>
                       </div>
                       <input className={styles.input} type="number" min="0" step="0.01" value={item.unitPrice} onChange={(e) => setItem(index, 'unitPrice', e.target.value)} placeholder="Unit" />
                       <input className={styles.input} type="number" min="0" step="0.01" value={item.discountPct} onChange={(e) => setItem(index, 'discountPct', e.target.value)} placeholder="Disc %" />
                       <input className={styles.input} type="number" min="0" step="0.01" value={item.taxPct} onChange={(e) => setItem(index, 'taxPct', e.target.value)} placeholder="GST %" />
-                       <div style={{ display: 'flex', gap: 6 }}>
-                         <button type="button" className={styles.btnSecondary} onClick={() => openQuickMedicineModal(index)}>+ New</button>
-                         <button type="button" className={styles.btnSecondary} onClick={() => duplicateItem(index)}>Copy</button>
-                         <button type="button" className={styles.btnDelete} onClick={() => removeItem(index)} disabled={form.items.length === 1}>Remove</button>
-                       </div>
-                     </div>
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'flex-end',
+                        fontWeight: 700,
+                        fontSize: 13,
+                        color: '#0f172a',
+                        background: '#f1f5f9',
+                        padding: '0 10px',
+                        borderRadius: 6,
+                        border: '1px solid #cbd5e1',
+                        minHeight: 38,
+                        whiteSpace: 'nowrap'
+                      }}>
+                        {currency(computedRow?.lineTotal || 0)}
+                      </div>
+                      <div>
+                        <button
+                          type="button"
+                          className={styles.btnDelete}
+                          title="Remove medicine item"
+                          onClick={() => removeItem(index)}
+                          disabled={form.items.length === 1}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
                     {selMed && (
-                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 2, paddingLeft: 4 }}>
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 3, paddingLeft: 4 }}>
                         GST: <strong>{Number(selMed.gstRate || 0)}%</strong>
-                        {selMed.stockQuantity < 10 && (
+                        {selMed.stockQuantity < 10 ? (
                           <span style={{ marginLeft: 8, color: '#dc2626', fontWeight: 600 }}>
                             Low stock: {selMed.stockQuantity} remaining
+                          </span>
+                        ) : (
+                          <span style={{ marginLeft: 8, color: '#16a34a' }}>
+                            Stock available: {selMed.stockQuantity}
                           </span>
                         )}
                       </div>
@@ -1983,34 +2020,48 @@ export default function MedicineInvoices() {
                   Balance: <strong>{currency(computed.grandTotal - computed.paidBySplit)}</strong>
                 </div>
               </div>
-              <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(3, minmax(120px, 1fr))', gap: 8 }}>
-                <input
-                  className={styles.input}
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="Cash"
-                  value={form.paymentBreakup?.cash ?? 0}
-                  onChange={(e) => setForm((p) => ({ ...p, paymentBreakup: { ...(p.paymentBreakup || {}), cash: e.target.value } }))}
-                />
-                <input
-                  className={styles.input}
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="UPI"
-                  value={form.paymentBreakup?.upi ?? 0}
-                  onChange={(e) => setForm((p) => ({ ...p, paymentBreakup: { ...(p.paymentBreakup || {}), upi: e.target.value } }))}
-                />
-                <input
-                  className={styles.input}
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="Card"
-                  value={form.paymentBreakup?.card ?? 0}
-                  onChange={(e) => setForm((p) => ({ ...p, paymentBreakup: { ...(p.paymentBreakup || {}), card: e.target.value } }))}
-                />
+              <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px dashed #cbd5e1' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#475569', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Payment Method Breakup
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(120px, 1fr))', gap: 12 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 4 }}>Cash (Rs)</label>
+                    <input
+                      className={styles.input}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={form.paymentBreakup?.cash ?? 0}
+                      onChange={(e) => setForm((p) => ({ ...p, paymentBreakup: { ...(p.paymentBreakup || {}), cash: e.target.value } }))}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 4 }}>UPI / QR (Rs)</label>
+                    <input
+                      className={styles.input}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={form.paymentBreakup?.upi ?? 0}
+                      onChange={(e) => setForm((p) => ({ ...p, paymentBreakup: { ...(p.paymentBreakup || {}), upi: e.target.value } }))}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 4 }}>Card / POS (Rs)</label>
+                    <input
+                      className={styles.input}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={form.paymentBreakup?.card ?? 0}
+                      onChange={(e) => setForm((p) => ({ ...p, paymentBreakup: { ...(p.paymentBreakup || {}), card: e.target.value } }))}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
 

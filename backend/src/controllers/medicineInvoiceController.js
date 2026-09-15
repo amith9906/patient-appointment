@@ -6,6 +6,7 @@ const {
   MedicineInvoiceReturn,
   MedicineInvoiceReturnItem,
   Medication,
+  MedicineCatalog,
   MedicationBatch,
   StockLedgerEntry,
   StockPurchase,
@@ -72,7 +73,7 @@ exports.getAll = async (req, res) => {
     else if (to) where.invoiceDate = { [Op.lte]: to };
     if (search) where.invoiceNumber = { [Op.iLike]: `%${search}%` };
 
-    const pagination = getPaginationParams(req, { defaultPerPage: 25, forcePaginate: req.query.paginate !== 'false' });
+    const pagination = getPaginationParams(req.query, { defaultPerPage: 25, forcePaginate: req.query.paginate !== 'false' });
     const baseOptions = {
       where,
       include: [
@@ -82,7 +83,12 @@ exports.getAll = async (req, res) => {
           model: MedicineInvoiceItem,
           as: 'items',
           attributes: ['id', 'quantity', 'lineTotal'],
-          include: [{ model: Medication, as: 'medication', attributes: ['id', 'name', 'isRestrictedDrug'] }],
+          include: [{
+            model: Medication,
+            as: 'medication',
+            attributes: ['id', 'name', 'isRestrictedDrug', 'catalogId'],
+            include: [{ model: MedicineCatalog, as: 'catalog' }],
+          }],
         },
         { model: Report, as: 'reports', attributes: ['id', 'title', 'originalName', 'createdAt'], required: false },
       ],
@@ -126,7 +132,12 @@ exports.getOne = async (req, res) => {
         {
           model: MedicineInvoiceItem,
           as: 'items',
-          include: [{ model: Medication, as: 'medication', attributes: ['id', 'name', 'genericName', 'category', 'isRestrictedDrug', 'scheduleCategory'] }],
+          include: [{
+            model: Medication,
+            as: 'medication',
+            attributes: ['id', 'name', 'genericName', 'category', 'isRestrictedDrug', 'scheduleCategory', 'catalogId'],
+            include: [{ model: MedicineCatalog, as: 'catalog' }],
+          }],
         },
       ],
     });
@@ -239,7 +250,6 @@ exports.create = async (req, res) => {
       const medication = medMap.get(rawItem.medicationId);
       const quantity = Number(rawItem.quantity || 0);
       if (!quantity || quantity <= 0) throw new Error(`Invalid quantity for ${medication.name}`);
-      if (!Number.isInteger(quantity)) throw new Error(`Quantity must be a whole number for ${medication.name}`);
       const totalStockQty = Number(medication.stockQuantity || 0);
       if (totalStockQty < quantity) {
         throw new Error(`Insufficient stock for ${medication.name}. Available ${totalStockQty}, requested ${quantity}`);
@@ -260,6 +270,9 @@ exports.create = async (req, res) => {
       if (isRestrictedDrug && !prescriberDoctorName) {
         throw new Error(`Prescriber doctor name is required for restricted medicine ${medication.name}`);
       }
+
+      const itemType = rawItem.itemType || medication.itemType || medication.category || 'tablet';
+      const unit = rawItem.unit || medication.unit || 'pcs';
 
       const lineSubtotal = round2(quantity * unitPrice);
       const lineDiscount = round2((lineSubtotal * discountPct) / 100);
@@ -315,6 +328,8 @@ exports.create = async (req, res) => {
           cgstAmount,
           sgstAmount,
           lineTotal,
+          itemType,
+          unit,
           isRestrictedDrug,
           prescriberDoctorName: prescriberDoctorName || null,
         },
@@ -809,6 +824,7 @@ exports.getGSTReport = async (req, res) => {
           model: Medication,
           as: 'medication',
           attributes: ['id', 'name', 'category', 'gstRate'],
+          required: false,
         },
       ],
     });
@@ -822,9 +838,16 @@ exports.getGSTReport = async (req, res) => {
 
     items.forEach((item) => {
       const taxPct = Number(item.taxPct || 0);
-      const taxable = round2(Number(item.lineSubtotal || 0) - Number(item.lineDiscount || 0));
-      const gstAmt = Number(item.lineTax || 0);
       const qty = Number(item.quantity || 0);
+      const price = Number(item.unitPrice || 0);
+      const rawSub = Number(item.lineSubtotal || 0);
+      const lineSub = rawSub > 0 ? rawSub : round2(qty * price);
+      const rawDisc = Number(item.lineDiscount || 0);
+      const discPct = Number(item.discountPct || 0);
+      const lineDisc = rawDisc > 0 ? rawDisc : round2((lineSub * discPct) / 100);
+      const taxable = round2(lineSub - lineDisc);
+      const rawTax = Number(item.lineTax || 0);
+      const gstAmt = rawTax > 0 ? rawTax : round2((taxable * taxPct) / 100);
 
       totalTaxableAmount += taxable;
       totalGSTAmount += gstAmt;
@@ -855,15 +878,19 @@ exports.getGSTReport = async (req, res) => {
     const salesReturnItems = await MedicineInvoiceReturnItem.findAll({
       include: [
         { model: MedicineInvoiceReturn, as: 'return', where: salesReturnWhere, attributes: ['id'] },
-        { model: Medication, as: 'medication', attributes: ['id', 'name', 'category', 'gstRate'] },
+        { model: Medication, as: 'medication', attributes: ['id', 'name', 'category', 'gstRate'], required: false },
       ],
     });
 
     salesReturnItems.forEach((item) => {
       const taxPct = Number(item.taxPct || 0);
-      const taxable = round2(Number(item.lineSubtotal || 0));
-      const gstAmt = Number(item.lineTax || 0);
       const qty = Number(item.quantity || 0);
+      const price = Number(item.unitPrice || 0);
+      const rawSub = Number(item.lineSubtotal || 0);
+      const lineSub = rawSub > 0 ? rawSub : round2(qty * price);
+      const taxable = round2(lineSub);
+      const rawTax = Number(item.lineTax || 0);
+      const gstAmt = rawTax > 0 ? rawTax : round2((taxable * taxPct) / 100);
       const medName = item.medication?.name || 'Unknown';
 
       totalTaxableAmount -= taxable;
@@ -905,7 +932,7 @@ exports.getGSTReport = async (req, res) => {
 
     const purchases = await StockPurchase.findAll({
       where: purchaseWhere,
-      include: [{ model: Medication, as: 'medication', attributes: ['id', 'name', 'category', 'gstRate'] }],
+      include: [{ model: Medication, as: 'medication', attributes: ['id', 'name', 'category', 'gstRate'], required: false }],
     });
 
     let inputTaxableAmount = 0;
@@ -947,7 +974,7 @@ exports.getGSTReport = async (req, res) => {
 
     const purchaseReturns = await StockPurchaseReturn.findAll({
       where: purchaseReturnWhere,
-      include: [{ model: Medication, as: 'medication', attributes: ['id', 'name', 'category', 'gstRate'] }],
+      include: [{ model: Medication, as: 'medication', attributes: ['id', 'name', 'category', 'gstRate'], required: false }],
     });
 
     purchaseReturns.forEach((p) => {
@@ -992,20 +1019,51 @@ exports.getGSTReport = async (req, res) => {
     const inputGST = round2(inputGSTAmount);
     const netTaxPayable = round2(outputGST - inputGST);
 
-    const invoiceHeaders = await MedicineInvoice.findAll({
-      where: invoiceWhere,
-      attributes: ['id', 'subtotal', 'discountAmount', 'taxAmount', 'totalAmount'],
-    });
+    let invoiceHeaderTaxable = 0;
+    let invoiceHeaderGst = 0;
+
+    if (gstRate !== undefined && gstRate !== '') {
+      const targetRate = Number(gstRate);
+      items.forEach((item) => {
+        if (Number(item.taxPct || 0) === targetRate) {
+          const qty = Number(item.quantity || 0);
+          const price = Number(item.unitPrice || 0);
+          const rawSub = Number(item.lineSubtotal || 0);
+          const lineSub = rawSub > 0 ? rawSub : round2(qty * price);
+          const rawDisc = Number(item.lineDiscount || 0);
+          const discPct = Number(item.discountPct || 0);
+          const lineDisc = rawDisc > 0 ? rawDisc : round2((lineSub * discPct) / 100);
+          const taxable = round2(lineSub - lineDisc);
+          const rawTax = Number(item.lineTax || 0);
+          const gstAmt = rawTax > 0 ? rawTax : round2((taxable * targetRate) / 100);
+
+          invoiceHeaderTaxable += taxable;
+          invoiceHeaderGst += gstAmt;
+        }
+      });
+      invoiceHeaderTaxable = round2(invoiceHeaderTaxable);
+      invoiceHeaderGst = round2(invoiceHeaderGst);
+    } else {
+      const invoiceHeaders = await MedicineInvoice.findAll({
+        where: invoiceWhere,
+        include: [{ model: MedicineInvoiceItem, as: 'items', attributes: ['id'], required: true }],
+        attributes: ['id', 'subtotal', 'discountAmount', 'taxAmount', 'totalAmount', 'grandTotal'],
+      });
+      invoiceHeaderTaxable = round2(invoiceHeaders.reduce((s, x) => {
+        const sub = Number(x.subtotal || 0);
+        const tot = Number(x.totalAmount || x.grandTotal || 0);
+        const disc = Number(x.discountAmount || 0);
+        const val = sub > 0 ? (sub - disc) : (tot - Number(x.taxAmount || 0));
+        return s + round2(val);
+      }, 0));
+      invoiceHeaderGst = round2(invoiceHeaders.reduce((s, x) => s + Number(x.taxAmount || 0), 0));
+    }
+
     const returnHeaders = await MedicineInvoiceReturn.findAll({
       where: salesReturnWhere,
       attributes: ['id', 'subtotal', 'taxAmount', 'totalAmount'],
     });
 
-    const invoiceHeaderTaxable = round2(invoiceHeaders.reduce(
-      (s, x) => s + (Number(x.subtotal || 0) - Number(x.discountAmount || 0)),
-      0
-    ));
-    const invoiceHeaderGst = round2(invoiceHeaders.reduce((s, x) => s + Number(x.taxAmount || 0), 0));
     const returnHeaderTaxable = round2(returnHeaders.reduce((s, x) => s + Number(x.subtotal || 0), 0));
     const returnHeaderGst = round2(returnHeaders.reduce((s, x) => s + Number(x.taxAmount || 0), 0));
     const returnItemsTaxable = round2(salesReturnItems.reduce((s, x) => s + Number(x.lineSubtotal || 0), 0));

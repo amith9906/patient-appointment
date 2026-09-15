@@ -21,6 +21,7 @@ const HospitalSettings = sequelize.define('HospitalSettings', {
   doctorQualification: { type: DataTypes.STRING },
   doctorRegNumber: { type: DataTypes.STRING },
   doctorSpecialization: { type: DataTypes.STRING },
+  doctorSignatureUrl: { type: DataTypes.TEXT, allowNull: true },
 
   // Receipt / PDF config
   receiptHeader: { type: DataTypes.TEXT },

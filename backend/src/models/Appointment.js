@@ -9,7 +9,7 @@ const Appointment = sequelize.define('Appointment', {
   appointmentTime: { type: DataTypes.TIME, allowNull: false },
   duration: { type: DataTypes.INTEGER, defaultValue: 30, comment: 'Duration in minutes' },
   status: {
-    type: DataTypes.ENUM('scheduled', 'postponed', 'confirmed', 'in_progress', 'completed', 'cancelled', 'no_show'),
+    type: DataTypes.ENUM('scheduled', 'pending_confirmation', 'postponed', 'confirmed', 'in_progress', 'completed', 'cancelled', 'no_show'),
     defaultValue: 'scheduled',
   },
   type: {
@@ -55,6 +55,9 @@ const Appointment = sequelize.define('Appointment', {
   claimRejectionReason: { type: DataTypes.TEXT },
   claimSettlementDate: { type: DataTypes.DATEONLY },
   claimDocuments: { type: DataTypes.JSONB, defaultValue: [] },
+  checkedInAt: { type: DataTypes.DATE, allowNull: true },
+  consultationStartedAt: { type: DataTypes.DATE, allowNull: true },
+  completedAt: { type: DataTypes.DATE, allowNull: true },
 }, {
   hooks: {
     beforeCreate: async (appt) => {

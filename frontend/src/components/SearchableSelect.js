@@ -30,18 +30,68 @@ export default function SearchableSelect({
     setText(selectedLabel);
   }, [selectedLabel]);
 
+  const findMatch = (rawText) => {
+    const trimmed = String(rawText || '').trim();
+    if (!trimmed) return null;
+    if (allowEmpty && trimmed.toLowerCase() === emptyLabel.toLowerCase()) return null;
+
+    // 1. Exact match by value (UUID or ID)
+    let match = normalized.find((o) => o.value.toLowerCase() === trimmed.toLowerCase());
+    if (match) return match;
+
+    // 2. Exact match by label
+    match = normalized.find((o) => o.label.toLowerCase() === trimmed.toLowerCase());
+    if (match) return match;
+
+    // 3. Prefix match by label
+    match = normalized.find((o) => o.label.toLowerCase().startsWith(trimmed.toLowerCase()));
+    if (match) return match;
+
+    // 4. Substring match by label
+    match = normalized.find((o) => o.label.toLowerCase().includes(trimmed.toLowerCase()));
+    if (match) return match;
+
+    return null;
+  };
+
   const emitValue = (nextText) => {
     const trimmed = String(nextText || '').trim();
-    if (!trimmed) {
+    if (!trimmed || (allowEmpty && trimmed.toLowerCase() === emptyLabel.toLowerCase())) {
       if (allowEmpty) onChange?.('');
       return;
     }
-    if (allowEmpty && trimmed === emptyLabel) {
+    const match = findMatch(nextText);
+    if (match) {
+      onChange?.(match.value);
+    } else if (allowEmpty) {
       onChange?.('');
+    }
+  };
+
+  const handleBlur = () => {
+    const trimmed = String(text || '').trim();
+    if (!trimmed || (allowEmpty && trimmed.toLowerCase() === emptyLabel.toLowerCase())) {
+      if (allowEmpty) {
+        setText(emptyLabel === 'Select' ? '' : emptyLabel);
+        onChange?.('');
+      } else {
+        setText(selectedLabel || '');
+      }
       return;
     }
-    const exact = normalized.find((o) => o.label.toLowerCase() === trimmed.toLowerCase());
-    if (exact) onChange?.(exact.value);
+
+    const match = findMatch(text);
+    if (match) {
+      setText(match.label);
+      onChange?.(match.value);
+    } else {
+      if (allowEmpty) {
+        setText('');
+        onChange?.('');
+      } else {
+        setText(selectedLabel || '');
+      }
+    }
   };
 
   return (
@@ -56,20 +106,14 @@ export default function SearchableSelect({
           setText(next);
           emitValue(next);
         }}
-        onBlur={() => {
-          // Snap back to selected option label for invalid free text
-          const trimmed = String(text || '').trim();
-          if (!trimmed) return;
-          const exact = normalized.find((o) => o.label.toLowerCase() === trimmed.toLowerCase());
-          if (!exact) setText(selectedLabel || '');
-        }}
+        onBlur={handleBlur}
         disabled={disabled}
         {...inputProps}
       />
       <datalist id={listId}>
         {allowEmpty && <option value={emptyLabel} />}
         {normalized.map((o, index) => (
-          <option key={`${o.value}-${index}`} value={o.label} />
+          <option key={`${o.value}-${index}`} value={o.label} data-value={o.value} />
         ))}
       </datalist>
     </>

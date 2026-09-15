@@ -16,9 +16,16 @@ const MedicineInvoiceItem = sequelize.define('MedicineInvoiceItem', {
   lineSubtotal: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
   lineDiscount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
   lineTax: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+  hsnCode: { type: DataTypes.STRING(20), defaultValue: '30049099' },
   cgstAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
   sgstAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+  igstAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
   lineTotal: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+  itemType: {
+    type: DataTypes.ENUM('tablet', 'capsule', 'syrup', 'injection', 'iv_fluid', 'consumable', 'procedure', 'cream', 'drops', 'inhaler', 'other'),
+    defaultValue: 'tablet',
+  },
+  unit: { type: DataTypes.STRING(30), defaultValue: 'pcs' },
   isRestrictedDrug: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   prescriberDoctorName: { type: DataTypes.STRING(140) },
 });

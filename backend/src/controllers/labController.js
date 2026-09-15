@@ -21,7 +21,7 @@ exports.getAllLabs = async (req, res) => {
     const where = { isActive: true };
     if (!isSuperAdmin(req.user)) where.hospitalId = scope.hospitalId;
 
-    const pagination = getPaginationParams(req, { defaultPerPage: 20, forcePaginate: req.query.paginate !== 'false' });
+    const pagination = getPaginationParams(req.query, { defaultPerPage: 20, forcePaginate: req.query.paginate !== 'false' });
     const baseOptions = {
       where,
       include: [{ model: Hospital, as: 'hospital', attributes: ['id', 'name'] }],
@@ -93,15 +93,36 @@ exports.getAllTests = async (req, res) => {
     const scope = await ensureScopedHospital(req, res);
     if (!scope.allowed) return;
 
-    const { labId, patientId, status, search, appointmentId } = req.query;
+    const { labId, patientId, status, category, fromDate, toDate, search, isAbnormal, appointmentId } = req.query;
     const where = {};
     if (labId) where.labId = labId;
     if (patientId) where.patientId = patientId;
     if (appointmentId) where.appointmentId = appointmentId;
     if (status) where.status = status;
-    if (search) where.testName = { [Op.iLike]: `%${search}%` };
+    if (category) where.category = { [Op.iLike]: `%${category}%` };
 
-      const pagination = getPaginationParams(req, { defaultPerPage: 25, forcePaginate: req.query.paginate !== 'false' });
+    if (isAbnormal === 'true') where.isAbnormal = true;
+    else if (isAbnormal === 'false') where.isAbnormal = false;
+
+    if (fromDate || toDate) {
+      where.orderedDate = {};
+      if (fromDate) where.orderedDate[Op.gte] = new Date(fromDate);
+      if (toDate) {
+        const endDate = new Date(toDate);
+        endDate.setHours(23, 59, 59, 999);
+        where.orderedDate[Op.lte] = endDate;
+      }
+    }
+
+    if (search) {
+      where[Op.or] = [
+        { testName: { [Op.iLike]: `%${search}%` } },
+        { testNumber: { [Op.iLike]: `%${search}%` } },
+        { testCode: { [Op.iLike]: `%${search}%` } },
+      ];
+    }
+
+      const pagination = getPaginationParams(req.query, { defaultPerPage: 25, forcePaginate: req.query.paginate !== 'false' });
       const baseOptions = {
         where,
         include: [

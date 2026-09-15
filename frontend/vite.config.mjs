@@ -5,18 +5,29 @@ export default defineConfig({
   plugins: [react()],
   esbuild: {
     loader: 'jsx',
-    include: /.*\.js$/,
+    include: /.*\.(js|jsx)$/,
     exclude: [],
   },
   optimizeDeps: {
     esbuildOptions: {
       loader: {
         '.js': 'jsx',
+        '.jsx': 'jsx',
       },
     },
   },
   server: {
     port: 3001,
+    proxy: {
+      '/api': {
+        target: process.env.VITE_PROXY_TARGET || 'http://localhost:5010',
+        changeOrigin: true,
+      },
+      '/uploads': {
+        target: process.env.VITE_PROXY_TARGET || 'http://localhost:5010',
+        changeOrigin: true,
+      },
+    },
   },
   build: {
     rollupOptions: {

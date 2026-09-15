@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api, { pdfAPI, vitalsAPI, appointmentAPI, labAPI, reportAPI, packageAPI, labReportTemplateAPI } from '../../services/api';
+import { useVitalsQuery, useSaveVitalsMutation } from '../../hooks/queries/useVitalsQuery';
 import { toast } from 'react-toastify';
 import SearchableSelect from '../../components/SearchableSelect';
 
@@ -193,6 +194,8 @@ export default function AppointmentDetail() {
   const [medOpen, setMedOpen]     = useState(false);
   const [rxTargetLangs, setRxTargetLangs] = useState(['kn', 'hi']);
   const [translatingRx, setTranslatingRx] = useState(false);
+  const [pendingPrescriptions, setPendingPrescriptions] = useState([]);
+  const [savingPrescriptions, setSavingPrescriptions]   = useState(false);
   const [rxMacros, setRxMacros] = useState(() => {
     try {
       const raw = localStorage.getItem(RX_MACRO_KEY);
@@ -206,10 +209,33 @@ export default function AppointmentDetail() {
   const [selectedRxMacroId, setSelectedRxMacroId] = useState('');
   const medRef = useRef(null);
 
-  // Vitals form
+  // Vitals form & TanStack Query hook
   const [vitalsForm, setVitalsForm]   = useState(INIT_VITALS_FORM);
   const [vitalsSaving, setVitalsSaving] = useState(false);
   const [vitalsRecorded, setVitalsRecorded] = useState(false);
+  const { data: vitalsData } = useVitalsQuery(id);
+  const saveVitalsMutation = useSaveVitalsMutation(id);
+
+  // Sync vitals form when query data updates (including 10s background refetch)
+  useEffect(() => {
+    if (vitalsData && vitalsData.id) {
+      setVitalsRecorded(true);
+      setVitalsForm({
+        heartRate: vitalsData.heartRate ?? vitalsData.pulse ?? '',
+        systolic: vitalsData.systolic ?? vitalsData.bp_systolic ?? '',
+        diastolic: vitalsData.diastolic ?? vitalsData.bp_diastolic ?? '',
+        temperature: vitalsData.temperature ?? vitalsData.temp ?? '',
+        spo2: vitalsData.spo2 ?? vitalsData.spO2 ?? '',
+        weight: vitalsData.weight ?? '',
+        height: vitalsData.height ?? '',
+        bloodSugar: vitalsData.bloodSugar ?? '',
+        bloodSugarType: vitalsData.bloodSugarType || 'random',
+        respiratoryRate: vitalsData.respiratoryRate ?? vitalsData.respRate ?? '',
+        symptoms: parseSymptoms(vitalsData.symptoms),
+        vitalNotes: vitalsData.vitalNotes ?? vitalsData.notes ?? '',
+      });
+    }
+  }, [vitalsData]);
 
   // Bill items
   const [billItems, setBillItems] = useState([]);
@@ -239,11 +265,10 @@ export default function AppointmentDetail() {
       api.get(`/appointments/${id}`),
       api.get('/medications'),
       api.get(`/prescriptions/appointment/${id}`),
-      vitalsAPI.get(id),
       appointmentAPI.getBillItems(id),
       labAPI.getAllTests({ appointmentId: id }),
       labAPI.getAll(),
-    ]).then(([a, m, p, v, b, lt, lb]) => {
+    ]).then(([a, m, p, b, lt, lb]) => {
       const apptData = a.data;
       setAppt(apptData);
       setMedications(m.data);
@@ -258,26 +283,6 @@ export default function AppointmentDetail() {
       setLabTests(lt.data || []);
       setLabs(lb.data || []);
       labReportTemplateAPI.getAll().then(r => setLabTemplates(r.data || [])).catch(() => {});
-
-      // Load vitals if recorded
-      if (v.data && v.data.id) {
-        setVitalsRecorded(true);
-        const vd = v.data;
-        setVitalsForm({
-          heartRate: vd.heartRate || '',
-          systolic: vd.systolic || '',
-          diastolic: vd.diastolic || '',
-          temperature: vd.temperature || '',
-          spo2: vd.spo2 || '',
-          weight: vd.weight || '',
-          height: vd.height || '',
-          bloodSugar: vd.bloodSugar || '',
-          bloodSugarType: vd.bloodSugarType || 'random',
-          respiratoryRate: vd.respiratoryRate || '',
-          symptoms: parseSymptoms(vd.symptoms),
-          vitalNotes: vd.vitalNotes || '',
-        });
-      }
 
       // Load patient documents (reports linked to this appointment)
       if (apptData.patient.id) {
@@ -453,8 +458,18 @@ export default function AppointmentDetail() {
     e.preventDefault();
     setVitalsSaving(true);
     try {
-      const payload = { ...vitalsForm, symptoms: JSON.stringify(vitalsForm.symptoms) };
-      await vitalsAPI.save(id, payload);
+      const payload = {
+        ...vitalsForm,
+        pulse: vitalsForm.heartRate,
+        temp: vitalsForm.temperature,
+        bp_systolic: vitalsForm.systolic,
+        bp_diastolic: vitalsForm.diastolic,
+        spO2: vitalsForm.spo2,
+        respRate: vitalsForm.respiratoryRate,
+        notes: vitalsForm.vitalNotes,
+        symptoms: JSON.stringify(vitalsForm.symptoms)
+      };
+      await saveVitalsMutation.mutateAsync(payload);
       setVitalsRecorded(true);
       toast.success('Vitals saved');
     } catch { toast.error('Failed to save vitals'); } finally { setVitalsSaving(false); }
@@ -568,25 +583,81 @@ export default function AppointmentDetail() {
     }
   };
 
-  const addPrescription = async (e) => {
+  const addPrescriptionToDraft = (e) => {
     e.preventDefault();
-    if (!rxForm.medicationId) return toast.error('Please select a medication');
+    if (!rxForm.medicationId || !rxForm.selectedMed) return toast.error('Please select a medication');
     const dur = rxForm.customDuration || rxForm.duration;
+    if (!dur) return toast.error('Please select or enter a duration');
+
+    const draftItem = {
+      _tempId: `draft-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      appointmentId: id,
+      medicationId: rxForm.medicationId,
+      medication: rxForm.selectedMed,
+      dosage: rxForm.selectedMed.dosage || '',
+      frequency: buildFrequency(slots),
+      timing: buildTiming(slots),
+      duration: dur,
+      instructions: rxForm.instructions,
+      instructionsOriginal: rxForm.instructions,
+      translatedInstructions: rxForm.translatedInstructions || {},
+      quantity: rxForm.quantity,
+      slots: { ...slots },
+    };
+
+    setPendingPrescriptions((prev) => [...prev, draftItem]);
+    setRxForm(INIT_RX);
+    setSlots(INIT_SLOTS);
+    setMedSearch('');
+    setAutoQty(true);
+    toast.success(`Added ${rxForm.selectedMed.name} to draft list`);
+  };
+
+  const removeDraftPrescription = (tempId) => {
+    setPendingPrescriptions((prev) => prev.filter((x) => x._tempId !== tempId));
+    toast.info('Removed from draft list');
+  };
+
+  const clearAllDrafts = () => {
+    setPendingPrescriptions([]);
+    toast.info('Draft list cleared');
+  };
+
+  const saveAllPrescriptions = async () => {
+    if (pendingPrescriptions.length === 0) return toast.error('No draft medicines to save');
+    setSavingPrescriptions(true);
     try {
-      const res = await api.post('/prescriptions', {
-        appointmentId: id, medicationId: rxForm.medicationId,
-        dosage: rxForm.selectedMed.dosage || '',
-        frequency: buildFrequency(slots), timing: buildTiming(slots),
-        duration: dur,
-        instructions: rxForm.instructions,
-        instructionsOriginal: rxForm.instructions,
-        translatedInstructions: rxForm.translatedInstructions || {},
-        quantity: rxForm.quantity,
-      });
-      setPrescriptions(p => [...p, res.data]);
-      setRxForm(INIT_RX); setSlots(INIT_SLOTS); setMedSearch(''); setAutoQty(true);
-      toast.success('Prescription added');
-    } catch (err) { toast.error(err.response.data.message || 'Failed'); }
+      const itemsPayload = pendingPrescriptions.map((p) => ({
+        appointmentId: id,
+        medicationId: p.medicationId,
+        dosage: p.dosage,
+        frequency: p.frequency,
+        timing: p.timing,
+        duration: p.duration,
+        instructions: p.instructions,
+        instructionsOriginal: p.instructionsOriginal,
+        translatedInstructions: p.translatedInstructions || {},
+        quantity: p.quantity,
+      }));
+
+      let savedItems = [];
+      try {
+        const res = await api.post('/prescriptions/bulk', { appointmentId: id, items: itemsPayload });
+        savedItems = Array.isArray(res.data) ? res.data : [res.data];
+      } catch {
+        // Fallback to individual POSTs if bulk endpoint encounters an issue
+        const results = await Promise.all(itemsPayload.map((item) => api.post('/prescriptions', item)));
+        savedItems = results.map((r) => r.data);
+      }
+
+      setPrescriptions((p) => [...p, ...savedItems]);
+      setPendingPrescriptions([]);
+      toast.success(`Saved all ${savedItems.length} prescription(s) successfully`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to save prescriptions');
+    } finally {
+      setSavingPrescriptions(false);
+    }
   };
 
   const deletePrescription = async (pid) => {
@@ -1310,8 +1381,120 @@ export default function AppointmentDetail() {
           </div>
         )}
 
-        <form onSubmit={addPrescription} className="border-2 border-dashed border-gray-200 rounded-xl p-5 space-y-4">
-          <div className="text-sm font-semibold text-gray-600">+ Add Medicine</div>
+        {/* STAGED / DRAFT PRESCRIPTIONS QUEUE */}
+        {pendingPrescriptions.length > 0 && (
+          <div className="bg-amber-50/70 border-2 border-dashed border-amber-300 rounded-xl p-5 mb-6 space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <span className="bg-amber-500 text-white text-xs font-bold px-2.5 py-1 rounded-full uppercase tracking-wider">
+                  Draft Queue ({pendingPrescriptions.length})
+                </span>
+                <span className="text-xs text-amber-800 font-medium">
+                  Staged medicines — click <strong>Save All Prescriptions</strong> to commit.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={clearAllDrafts}
+                className="text-xs text-amber-700 hover:text-red-600 underline font-medium"
+              >
+                Clear Draft List
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {pendingPrescriptions.map((p, idx) => (
+                <div key={p._tempId} className="bg-white border border-amber-200 rounded-xl p-4 shadow-sm relative">
+                  <div className="flex items-start gap-3">
+                    <div className="w-7 h-7 rounded-full bg-amber-100 flex items-center justify-center text-xs font-bold text-amber-800 flex-shrink-0">
+                      {idx + 1}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span className="font-semibold text-gray-800">{p.medication.name}</span>
+                        {p.medication.dosage && (
+                          <span className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
+                            {p.medication.dosage}
+                          </span>
+                        )}
+                        {p.medication.category && (
+                          <span className="text-xs text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded capitalize">
+                            {p.medication.category}
+                          </span>
+                        )}
+                        <span className="text-xs font-semibold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full ml-auto">
+                          Pending Save
+                        </span>
+                      </div>
+                      {p.medication.composition && (
+                        <div className="text-xs text-blue-500 mb-2">Composition: {p.medication.composition}</div>
+                      )}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {p.frequency && (
+                          <span className="font-mono font-bold text-base text-teal-700 bg-teal-50 border border-teal-100 px-2.5 py-0.5 rounded-lg tracking-widest">
+                            {p.frequency}
+                          </span>
+                        )}
+                        {p.timing && <span className="text-xs text-gray-500">{p.timing}</span>}
+                        {p.duration && (
+                          <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">
+                            Duration: {p.duration}
+                          </span>
+                        )}
+                        {p.quantity && (
+                          <span className="text-xs text-gray-500 ml-auto">
+                            Qty: <strong>{p.quantity}</strong>
+                          </span>
+                        )}
+                      </div>
+                      {(p.instructionsOriginal || p.instructions) && (
+                        <div className="mt-1.5 text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded px-2.5 py-1.5">
+                          <strong>Original:</strong> {p.instructionsOriginal || p.instructions}
+                        </div>
+                      )}
+                      {Object.entries(parseTranslatedInstructions(p.translatedInstructions)).map(([code, text]) => (
+                        <div key={code} className="mt-1 text-xs text-cyan-800 bg-cyan-50 border border-cyan-100 rounded px-2.5 py-1.5">
+                          <strong>{LANG_LABEL_BY_CODE[code] || code.toUpperCase()}:</strong> {text}
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeDraftPrescription(p._tempId)}
+                      className="text-red-400 hover:text-red-600 text-base font-bold p-1 flex-shrink-0"
+                      title="Remove from draft"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={saveAllPrescriptions}
+                disabled={savingPrescriptions}
+                className="w-full bg-gradient-to-r from-teal-600 to-indigo-600 hover:from-teal-700 hover:to-indigo-700 text-white font-bold py-3 px-6 rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 text-sm"
+              >
+                {savingPrescriptions ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Saving All Prescriptions...
+                  </>
+                ) : (
+                  <>
+                    💾 Save All Prescriptions ({pendingPrescriptions.length} {pendingPrescriptions.length === 1 ? 'medicine' : 'medicines'})
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <form onSubmit={addPrescriptionToDraft} className="border-2 border-dashed border-gray-200 rounded-xl p-5 space-y-4">
+          <div className="text-sm font-semibold text-gray-600">+ Add Medicine to Draft List</div>
 
           {/* Medication Search */}
           <div className="relative" ref={medRef}>
@@ -1528,9 +1711,21 @@ export default function AppointmentDetail() {
             </div>
           </div>
 
-          <button type="submit" className="w-full bg-teal-600 text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-teal-700 transition-colors">
-            + Add to Prescription
-          </button>
+          <div className="flex items-center gap-3">
+            <button type="submit" className="flex-1 bg-teal-600 text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-teal-700 transition-colors">
+              + Add Medicine to Draft List
+            </button>
+            {pendingPrescriptions.length > 0 && (
+              <button
+                type="button"
+                onClick={saveAllPrescriptions}
+                disabled={savingPrescriptions}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white py-2.5 px-5 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {savingPrescriptions ? 'Saving...' : `Save All (${pendingPrescriptions.length})`}
+              </button>
+            )}
+          </div>
         </form>
       </div>
 

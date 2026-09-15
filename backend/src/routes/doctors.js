@@ -1,21 +1,22 @@
 const router = require('express').Router();
 const c = require('../controllers/doctorController');
 const { authenticate, authorize } = require('../middleware/auth');
+const { cacheMiddleware } = require('../utils/cache');
 
 router.use(authenticate);
 // Doctor-self routes (must be before /:id)
-router.get('/me', authorize('doctor'), c.getMe);
-router.get('/me/appointments', authorize('doctor'), c.getMyAppointments);
-router.get('/me/patients', authorize('doctor'), c.getMyPatients);
-router.get('/department/stats', authorize('doctor', 'admin', 'super_admin'), c.getDepartmentStats);
-router.get('/department/doctors', authorize('doctor', 'admin', 'super_admin'), c.getDepartmentDoctors);
-router.get('/availability/summary', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.getAvailabilitySummary);
-router.get('/available-on', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.getAvailableOnDate);
+router.get('/me', authorize('doctor'), cacheMiddleware(120, 'doctor_me'), c.getMe);
+router.get('/me/appointments', authorize('doctor'), cacheMiddleware(60, 'doctor_me_appointments'), c.getMyAppointments);
+router.get('/me/patients', authorize('doctor'), cacheMiddleware(120, 'doctor_me_patients'), c.getMyPatients);
+router.get('/department/stats', authorize('doctor', 'admin', 'super_admin'), cacheMiddleware(300, 'doctor_dept_stats'), c.getDepartmentStats);
+router.get('/department/doctors', authorize('doctor', 'admin', 'super_admin'), cacheMiddleware(300, 'doctor_dept_doctors'), c.getDepartmentDoctors);
+router.get('/availability/summary', authorize('super_admin', 'admin', 'receptionist', 'doctor'), cacheMiddleware(120, 'doctor_availability_summary'), c.getAvailabilitySummary);
+router.get('/available-on', authorize('super_admin', 'admin', 'receptionist', 'doctor'), cacheMiddleware(120, 'doctor_available_on'), c.getAvailableOnDate);
 // General routes
-router.get('/', c.getAll);
-router.get('/:id', c.getOne);
-router.get('/:id/slots', c.getAvailableSlots);
-router.get('/:id/availability', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.getAvailability);
+router.get('/', cacheMiddleware(300, 'doctors_list'), c.getAll);
+router.get('/:id', cacheMiddleware(300, 'doctors_detail'), c.getOne);
+router.get('/:id/slots', cacheMiddleware(60, 'doctor_slots'), c.getAvailableSlots);
+router.get('/:id/availability', authorize('super_admin', 'admin', 'receptionist', 'doctor'), cacheMiddleware(120, 'doctor_availability'), c.getAvailability);
 router.post('/:id/availability', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.saveAvailability);
 router.post('/', authorize('super_admin', 'admin', 'receptionist'), c.create);
 router.put('/:id', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.update);

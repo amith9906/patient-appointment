@@ -3,9 +3,11 @@ const { Department, Hospital, Doctor, User } = require('../models');
 const { authenticate, authorize } = require('../middleware/auth');
 const { ensureScopedHospital, isSuperAdmin } = require('../utils/accessScope');
 
+const { cacheMiddleware } = require('../utils/cache');
+
 router.use(authenticate);
 
-router.get('/', authorize('super_admin', 'admin', 'receptionist', 'doctor'), async (req, res) => {
+router.get('/', authorize('super_admin', 'admin', 'receptionist', 'doctor'), cacheMiddleware(120, 'departments_list'), async (req, res) => {
   try {
     const scope = await ensureScopedHospital(req, res);
     if (!scope.allowed) return;

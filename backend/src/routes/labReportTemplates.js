@@ -2,8 +2,10 @@ const router = require('express').Router();
 const c = require('../controllers/labReportTemplateController');
 const { authenticate, authorize } = require('../middleware/auth');
 
+const { cacheMiddleware } = require('../utils/cache');
+
 router.use(authenticate);
-router.get('/',      authorize('super_admin', 'admin', 'doctor', 'lab_technician'), c.getAll);
+router.get('/',      authorize('super_admin', 'admin', 'doctor', 'lab_technician'), cacheMiddleware(180, 'lab_templates_list'), c.getAll);
 router.get('/:id',   authorize('super_admin', 'admin', 'doctor', 'lab_technician'), c.getOne);
 router.post('/',     authorize('super_admin', 'admin'), c.create);
 router.put('/:id',   authorize('super_admin', 'admin'), c.update);

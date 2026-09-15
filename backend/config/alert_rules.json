@@ -1,0 +1,44 @@
+{
+  "alertRules": [
+    {
+      "name": "HighAPILatencyWarning",
+      "metric": "http_request_duration_p95_ms",
+      "condition": ">",
+      "threshold": 500,
+      "severity": "WARNING",
+      "description": "API P95 response duration exceeded 500ms threshold."
+    },
+    {
+      "name": "HighAPILatencyCritical",
+      "metric": "http_request_duration_p99_ms",
+      "condition": ">",
+      "threshold": 1000,
+      "severity": "CRITICAL",
+      "description": "API P99 response duration exceeded 1000ms SLA limit."
+    },
+    {
+      "name": "DatabaseQueryDurationWarning",
+      "metric": "db_query_duration_p95_ms",
+      "condition": ">",
+      "threshold": 200,
+      "severity": "WARNING",
+      "description": "PostgreSQL query P95 latency exceeded 200ms."
+    },
+    {
+      "name": "GlobalSearchLatencyWarning",
+      "metric": "search_query_duration_p95_ms",
+      "condition": ">",
+      "threshold": 500,
+      "severity": "WARNING",
+      "description": "Global Full-Text Search response latency exceeded 500ms."
+    },
+    {
+      "name": "OutboxQueueBacklogWarning",
+      "metric": "outbox_unprocessed_events_count",
+      "condition": ">",
+      "threshold": 1000,
+      "severity": "WARNING",
+      "description": "Outbox event queue unprocessed backlog exceeded 1000 events."
+    }
+  ]
+}

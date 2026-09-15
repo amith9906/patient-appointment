@@ -8,6 +8,7 @@ router.get('/prescription/:appointmentId', authorize('super_admin', 'admin', 're
 router.get('/bill/:appointmentId', authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician', 'patient'), c.generateBill);
 router.get('/receipt/:appointmentId', authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician', 'patient'), c.generateReceipt);
 router.get('/lab-report/:labTestId', authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician', 'patient'), c.generateLabReport);
+router.get('/lab-receipt/:labTestId', authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician', 'patient'), c.generateLabReceipt);
 router.get('/medicine-invoice/:invoiceId', authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician', 'patient'), c.generateMedicineInvoice);
 router.get('/medicine-return/:returnId', authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), c.generateMedicineReturnNote);
 router.get('/purchase-return/:returnId', authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), c.generatePurchaseReturnNote);

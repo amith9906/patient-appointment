@@ -21,6 +21,8 @@ router.delete('/:id/bill/items/:itemId', authorize('super_admin', 'admin'), c.de
 router.post('/:id/bill/payments', authorize('super_admin', 'admin', 'receptionist'), c.addPayment);
 router.delete('/:id/bill/payments/:paymentId', authorize('super_admin', 'admin'), c.deletePayment);
 router.patch('/:id/bill/discount', authorize('super_admin', 'admin'), c.updateDiscount);
+router.get('/:id/advances', authorize('super_admin', 'admin', 'receptionist', 'doctor', 'nurse'), c.getAdvanceDeposits);
+router.post('/:id/advances', authorize('super_admin', 'admin', 'receptionist'), c.recordAdvanceDeposit);
 
 // Admissions
 router.get('/', authorize('super_admin', 'admin', 'receptionist', 'doctor', 'nurse'), c.getAdmissions);

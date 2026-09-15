@@ -2,7 +2,13 @@ import React, { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+import { queryClient } from './services/queryClient';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { LoadingProvider } from './context/LoadingContext';
+import { DialogProvider } from './context/DialogContext';
+import GlobalLoader from './components/GlobalLoader';
 import Layout from './components/Layout';
 
 // Existing pages
@@ -44,6 +50,12 @@ import Shifts from './pages/Shifts';
 import HODDashboard from './pages/HODDashboard';
 import HODLeaves from './pages/HODLeaves';
 import NurseDashboardPage from './pages/NurseDashboard';
+import PublicDoctorBooking from './pages/PublicDoctorBooking';
+import Referrals from './pages/Referrals';
+
+// Self-Service Patient Portal
+import PatientPortalLogin from './pages/PatientPortalLogin';
+import PatientPortalDashboard from './pages/PatientPortalDashboard';
 
 // Portals
 import PatientDashboard from './pages/portal/PatientDashboard';
@@ -102,6 +114,11 @@ function AppRoutes() {
 
   return (
     <Routes>
+      {/* Public Unauthenticated Doctor Booking & Patient Portal Login */}
+      <Route path="/book/:slug" element={<PublicDoctorBooking />} />
+      <Route path="/patient-portal/login" element={<PatientPortalLogin />} />
+      <Route path="/patient-portal/dashboard" element={<PatientPortalDashboard />} />
+
       {/* Auth */}
       <Route path="/login" element={user ? homeRedirect : <Login />} />
       <Route path="/register" element={user ? homeRedirect : <Register />} />
@@ -139,6 +156,7 @@ function AppRoutes() {
       <Route path="/ipd" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor','nurse']}><IPD /></PrivateRoute>} />
       <Route path="/ipd/:id" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor','nurse']}><IPDDetail /></PrivateRoute>} />
       <Route path="/follow-ups" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor']}><FollowUps /></PrivateRoute>} />
+      <Route path="/referrals" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor']}><Referrals /></PrivateRoute>} />
       <Route path="/ot" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor']}><OT /></PrivateRoute>} />
       <Route path="/nurses" element={<PrivateRoute roles={['super_admin','admin','receptionist','doctor']}><Nurses /></PrivateRoute>} />
       <Route path="/nurse-dashboard" element={<PrivateRoute roles={['super_admin','admin']}><NurseDashboardPage /></PrivateRoute>} />
@@ -173,11 +191,24 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <AppRoutes />
-        <ToastContainer position="top-right" autoClose={3000} hideProgressBar={false} newestOnTop closeOnClick pauseOnFocusLoss draggable pauseOnHover />
-      </BrowserRouter>
-    </AuthProvider>
+    <QueryClientProvider client={queryClient}>
+      <LoadingProvider>
+        <DialogProvider>
+          <AuthProvider>
+            <BrowserRouter
+              future={{
+                v7_startTransition: true,
+                v7_relativeSplatPath: true,
+              }}
+            >
+              <GlobalLoader />
+              <AppRoutes />
+              <ToastContainer position="top-right" autoClose={3000} hideProgressBar={false} newestOnTop closeOnClick pauseOnFocusLoss draggable pauseOnHover />
+            </BrowserRouter>
+          </AuthProvider>
+        </DialogProvider>
+      </LoadingProvider>
+      {process.env.NODE_ENV === 'development' && false && <ReactQueryDevtools initialIsOpen={false} />}
+    </QueryClientProvider>
   );
 }

@@ -3,21 +3,32 @@ const sequelize = require('../config/database');
 
 const Medication = sequelize.define('Medication', {
   id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  catalogId: { type: DataTypes.UUID, allowNull: true, references: { model: 'MedicineCatalogs', key: 'id' } },
   name: { type: DataTypes.STRING, allowNull: false },
   genericName: { type: DataTypes.STRING },
   composition: { type: DataTypes.TEXT, comment: 'e.g. Paracetamol 500mg + Caffeine 65mg' },
   category: {
     type: DataTypes.ENUM(
-      'tablet', 'capsule', 'syrup', 'injection', 'cream', 'drops', 'inhaler', 'patch', 'suppository', 'vaccine', 'other'
+      'tablet', 'capsule', 'syrup', 'injection', 'iv_fluid', 'consumable', 'procedure', 'cream', 'drops', 'inhaler', 'patch', 'suppository', 'vaccine', 'other'
     ),
     defaultValue: 'tablet',
+  },
+  itemType: {
+    type: DataTypes.ENUM('tablet', 'capsule', 'syrup', 'injection', 'iv_fluid', 'consumable', 'procedure', 'cream', 'drops', 'inhaler', 'other'),
+    defaultValue: 'tablet',
+    comment: 'Type classification for stock deduction & billing unit handling',
+  },
+  unit: {
+    type: DataTypes.STRING(30),
+    defaultValue: 'pcs',
+    comment: 'Unit of measure e.g. ml, vial, bag, pcs, session, strip',
   },
   dosage: { type: DataTypes.STRING, comment: 'e.g. 500mg, 10ml' },
   manufacturer: { type: DataTypes.STRING },
   description: { type: DataTypes.TEXT },
   sideEffects: { type: DataTypes.TEXT },
   contraindications: { type: DataTypes.TEXT },
-  stockQuantity: { type: DataTypes.INTEGER, defaultValue: 0 },
+  stockQuantity: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
   unitPrice: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
   purchasePrice: { type: DataTypes.DECIMAL(10, 2), comment: 'Cost price from supplier' },
   gstRate: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 0.00 },

@@ -1,6 +1,7 @@
 const { Doctor, Hospital, Department, Appointment, Patient, DoctorAvailability, DoctorLeave, IPDAdmission, Vitals, MedicationAdministration } = require('../models');
 const { Op } = require('sequelize');
 const { ensureScopedHospital, isSuperAdmin, getHODDepartmentId } = require('../utils/accessScope');
+const { getPaginationParams, buildPaginationMeta, applyPaginationOptions } = require('../utils/pagination');
 const {
   DAY_NAMES,
   toMinutes,
@@ -96,11 +97,31 @@ exports.getMyAppointments = async (req, res) => {
     if (status) where.status = status;
     if (date) where.appointmentDate = date;
     else if (from && to) where.appointmentDate = { [Op.between]: [from, to] };
-    const appointments = await Appointment.findAll({
+
+    const pagination = getPaginationParams(req.query, { defaultPerPage: 50 });
+    const baseOptions = {
       where,
       include: [{ model: Patient, as: 'patient', attributes: ['id', 'name', 'patientId', 'phone', 'dateOfBirth', 'bloodGroup', 'allergies'] }],
       order: [['appointmentDate', 'DESC'], ['appointmentTime', 'DESC']],
-    });
+    };
+
+    if (pagination) {
+      const queryOptions = applyPaginationOptions(baseOptions, pagination, { forceDistinct: true });
+      const appointments = await Appointment.findAndCountAll(queryOptions);
+      return res.json({
+        data: appointments.rows,
+        meta: buildPaginationMeta(pagination, appointments.count),
+      });
+    }
+
+    // Safety guard: If no date filter, pagination, or explicit limit provided, default to latest 100 appointments
+    if (!date && !from && !req.query.limit) {
+      baseOptions.limit = 100;
+    } else if (req.query.limit) {
+      baseOptions.limit = Math.min(Number.parseInt(req.query.limit, 10) || 100, 500);
+    }
+
+    const appointments = await Appointment.findAll(baseOptions);
     res.json(appointments);
   } catch (err) { res.status(500).json({ message: err.message }); }
 };

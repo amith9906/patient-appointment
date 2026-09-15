@@ -67,13 +67,40 @@ export default function IPDDetail() {
   const [showSummaryModal, setShowSummaryModal] = useState(false);
 
   // Billing
-  const [bill, setBill] = useState({ billItems: [], payments: [], summary: {} });
+  const [bill, setBill] = useState({ billItems: [], payments: [], advanceDeposits: [], summary: {} });
   const [billLoading, setBillLoading] = useState(false);
   const [itemForm, setItemForm] = useState({ ...INIT_ITEM, open: false, editing: null });
   const [paymentForm, setPaymentForm] = useState({ ...INIT_PAYMENT, open: false });
   const [savingItem, setSavingItem] = useState(false);
   const [savingPayment, setSavingPayment] = useState(false);
   const [discount, setDiscount] = useState('');
+
+  // Advance Deposit State
+  const [showAdvanceForm, setShowAdvanceForm] = useState(false);
+  const [advanceAmount, setAdvanceAmount] = useState('');
+  const [advanceMode, setAdvanceMode] = useState('cash');
+  const [advanceRef, setAdvanceRef] = useState('');
+  const [advanceNotes, setAdvanceNotes] = useState('');
+  const [savingAdvance, setSavingAdvance] = useState(false);
+
+  const handleSaveAdvance = async (e) => {
+    e.preventDefault();
+    if (!advanceAmount || parseFloat(advanceAmount) <= 0) return toast.error('Valid advance amount required');
+    setSavingAdvance(true);
+    try {
+      await ipdAPI.recordAdvance(id, { amount: advanceAmount, paymentMode: advanceMode, transactionRef: advanceRef, notes: advanceNotes });
+      toast.success('Advance deposit recorded successfully!');
+      setShowAdvanceForm(false);
+      setAdvanceAmount('');
+      setAdvanceRef('');
+      setAdvanceNotes('');
+      loadBill();
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Failed to record advance deposit');
+    } finally {
+      setSavingAdvance(false);
+    }
+  };
 
   // Nurses
   const [nurseAssignments, setNurseAssignments] = useState([]);
@@ -870,16 +897,17 @@ export default function IPDDetail() {
                     ['Total Billed', fmt(summary.billedAmount)],
                     ['Discount', fmt(summary.discountAmount)],
                     ['Paid', fmt(summary.paidAmount)],
+                    ['Advance Deposits', fmt(summary.totalAdvances)],
                     ['Balance Due', fmt(summary.balance)],
                   ].map(([label, val]) => (
                     <div key={label} style={{ textAlign: 'center', background: '#fff', borderRadius: 10, padding: '10px 8px', boxShadow: '0 1px 4px #0001' }}>
                       <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, textTransform: 'uppercase', marginBottom: 4 }}>{label}</div>
-                      <div style={{ fontSize: 16, fontWeight: 700, color: label === 'Balance Due' ? '#dc2626' : '#1e293b' }}>{val}</div>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: label === 'Balance Due' ? '#dc2626' : label === 'Advance Deposits' ? '#0f766e' : '#1e293b' }}>{val}</div>
                     </div>
                   ))}
                 </div>
                 {isAdmin && (
-                  <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                     <label className={styles.label} style={{ margin: 0, minWidth: 80 }}>Discount ₹</label>
                     <input className={styles.input} type="number" min={0} step="0.01" value={discount}
                       onChange={e => setDiscount(e.target.value)}
@@ -887,7 +915,41 @@ export default function IPDDetail() {
                     <button className={styles.btnSecondary} style={{ padding: '6px 14px', fontSize: 13 }} onClick={handleSaveDiscount}>
                       Apply
                     </button>
+                    <button className={styles.btnPrimary} style={{ background: '#0f766e', fontSize: 13, marginLeft: 'auto' }} onClick={() => setShowAdvanceForm(v => !v)}>
+                      + Record Advance Deposit
+                    </button>
                   </div>
+                )}
+                {showAdvanceForm && (
+                  <form onSubmit={handleSaveAdvance} style={{ marginTop: 12, background: '#f0fdfa', border: '1px solid #99f6e4', borderRadius: 10, padding: 14 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0f766e', marginBottom: 8 }}>Record Advance Payment Deposit</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 2fr', gap: 10, marginBottom: 10 }}>
+                      <div>
+                        <label className={styles.label}>Amount ₹ *</label>
+                        <input className={styles.input} type="number" min={1} step="0.01" value={advanceAmount} onChange={e => setAdvanceAmount(e.target.value)} required placeholder="e.g. 5000" />
+                      </div>
+                      <div>
+                        <label className={styles.label}>Mode</label>
+                        <select className={styles.input} value={advanceMode} onChange={e => setAdvanceMode(e.target.value)}>
+                          {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m.toUpperCase()}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className={styles.label}>Txn / Ref #</label>
+                        <input className={styles.input} value={advanceRef} onChange={e => setAdvanceRef(e.target.value)} placeholder="UPI / Receipt #" />
+                      </div>
+                      <div>
+                        <label className={styles.label}>Notes</label>
+                        <input className={styles.input} value={advanceNotes} onChange={e => setAdvanceNotes(e.target.value)} placeholder="Deposit note..." />
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                      <button type="button" className={styles.btnSecondary} onClick={() => setShowAdvanceForm(false)}>Cancel</button>
+                      <button type="submit" className={styles.btnPrimary} style={{ background: '#0f766e' }} disabled={savingAdvance}>
+                        {savingAdvance ? 'Saving...' : 'Save Advance Deposit'}
+                      </button>
+                    </div>
+                  </form>
                 )}
               </div>
 

@@ -1,9 +1,10 @@
-const { Prescription, Medication, Appointment, Patient, Doctor } = require('../models');
+const { sequelize, Prescription, Medication, Appointment, Patient, Doctor } = require('../models');
 const {
   LANGUAGE_MAP,
   SUPPORTED_LANGUAGE_CODES,
   translateTextToLanguages,
 } = require('../utils/translator');
+const { deductMedicationStock, restoreMedicationStock } = require('../utils/stockManager');
 
 function normalizeTranslatedInstructions(value) {
   if (!value) return null;
@@ -55,7 +56,10 @@ exports.getMyPrescriptions = async (req, res) => {
   } catch (err) { res.status(500).json({ message: err.message }); }
 };
 
+const { invalidatePrefix } = require('../utils/cache');
+
 exports.create = async (req, res) => {
+  const tx = await sequelize.transaction();
   try {
     const payload = { ...req.body };
     const original = String(payload.instructionsOriginal || payload.instructions || '').trim();
@@ -63,19 +67,105 @@ exports.create = async (req, res) => {
     payload.instructions = original || null;
     payload.translatedInstructions = normalizeTranslatedInstructions(payload.translatedInstructions);
 
-    const prescription = await Prescription.create(payload);
-    // Deduct stock when medication is dispensed
+    const prescription = await Prescription.create(payload, { transaction: tx });
+    let stockResult = null;
+
+    // Deduct stock when medication is dispensed with full validation & StockLedgerEntry
     if (payload.medicationId && payload.quantity) {
-      const med = await Medication.findByPk(payload.medicationId);
-      if (med && med.stockQuantity !== null) {
-        await med.update({ stockQuantity: Math.max(0, med.stockQuantity - Number(payload.quantity)) });
-      }
+      stockResult = await deductMedicationStock({
+        medicationId: payload.medicationId,
+        quantity: payload.quantity,
+        referenceType: 'prescription',
+        referenceId: prescription.id,
+        notes: `Prescription dispensed: ${prescription.dosage || ''} (${payload.quantity})`.trim(),
+        userId: req.user?.id || null,
+        transaction: tx,
+      });
     }
-    const full = await Prescription.findByPk(prescription.id, {
-      include: [{ model: Medication, as: 'medication' }],
-    });
-    res.status(201).json(full);
-  } catch (err) { res.status(400).json({ message: err.message }); }
+
+    await tx.commit();
+
+    invalidatePrefix('medications');
+    invalidatePrefix('patient_history');
+
+    const result = prescription.toJSON();
+    if (stockResult && stockResult.medication) {
+      result.medication = stockResult.medication.toJSON();
+    } else if (payload.medicationId) {
+      const med = await Medication.findByPk(payload.medicationId);
+      result.medication = med ? med.toJSON() : null;
+    } else {
+      result.medication = null;
+    }
+
+    res.status(201).json(result);
+  } catch (err) {
+    await tx.rollback();
+    res.status(400).json({ message: err.message });
+  }
+};
+
+exports.bulkCreate = async (req, res) => {
+  const tx = await sequelize.transaction();
+  try {
+    const { appointmentId, items = [] } = req.body || {};
+    const payloadItems = Array.isArray(req.body) ? req.body : items;
+
+    if (!Array.isArray(payloadItems) || payloadItems.length === 0) {
+      await tx.rollback();
+      return res.status(400).json({ message: 'No prescription items provided' });
+    }
+
+    const createdPrescriptions = [];
+
+    for (const item of payloadItems) {
+      const payload = { ...item };
+      if (appointmentId && !payload.appointmentId) {
+        payload.appointmentId = appointmentId;
+      }
+      const original = String(payload.instructionsOriginal || payload.instructions || '').trim();
+      payload.instructionsOriginal = original || null;
+      payload.instructions = original || null;
+      payload.translatedInstructions = normalizeTranslatedInstructions(payload.translatedInstructions);
+
+      const prescription = await Prescription.create(payload, { transaction: tx });
+      let stockResult = null;
+
+      if (payload.medicationId && payload.quantity) {
+        stockResult = await deductMedicationStock({
+          medicationId: payload.medicationId,
+          quantity: payload.quantity,
+          referenceType: 'prescription',
+          referenceId: prescription.id,
+          notes: `Prescription dispensed: ${prescription.dosage || ''} (${payload.quantity})`.trim(),
+          userId: req.user?.id || null,
+          transaction: tx,
+        });
+      }
+
+      const result = prescription.toJSON();
+      if (stockResult && stockResult.medication) {
+        result.medication = stockResult.medication.toJSON();
+      } else if (payload.medicationId) {
+        const med = await Medication.findByPk(payload.medicationId, { transaction: tx });
+        result.medication = med ? med.toJSON() : null;
+      } else {
+        result.medication = null;
+      }
+
+      createdPrescriptions.push(result);
+    }
+
+    await tx.commit();
+
+    invalidatePrefix('medications');
+    invalidatePrefix('patient_history');
+
+    res.status(201).json(createdPrescriptions);
+  } catch (err) {
+    await tx.rollback();
+    res.status(400).json({ message: err.message });
+  }
 };
 
 exports.update = async (req, res) => {
@@ -100,16 +190,35 @@ exports.update = async (req, res) => {
 };
 
 exports.delete = async (req, res) => {
+  const tx = await sequelize.transaction();
   try {
-    const p = await Prescription.findByPk(req.params.id);
-    if (!p) return res.status(404).json({ message: 'Prescription not found' });
-    // Restore stock when prescription is deleted
-    if (p.medicationId && p.quantity) {
-      await Medication.increment('stockQuantity', { by: Number(p.quantity), where: { id: p.medicationId } });
+    const p = await Prescription.findByPk(req.params.id, { transaction: tx });
+    if (!p) {
+      await tx.rollback();
+      return res.status(404).json({ message: 'Prescription not found' });
     }
-    await p.destroy();
+
+    // Restore stock when prescription is deleted with StockLedgerEntry
+    if (p.medicationId && p.quantity) {
+      await restoreMedicationStock({
+        medicationId: p.medicationId,
+        quantity: p.quantity,
+        referenceType: 'prescription',
+        referenceId: p.id,
+        notes: `Prescription deleted/cancelled (${p.quantity})`,
+        userId: req.user?.id || null,
+        transaction: tx,
+      });
+    }
+
+    await p.destroy({ transaction: tx });
+    await tx.commit();
+
     res.json({ message: 'Prescription deleted' });
-  } catch (err) { res.status(500).json({ message: err.message }); }
+  } catch (err) {
+    await tx.rollback();
+    res.status(500).json({ message: err.message });
+  }
 };
 
 exports.translate = async (req, res) => {

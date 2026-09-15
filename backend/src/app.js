@@ -5,10 +5,39 @@ const path = require('path');
 const { sequelize } = require('./models');
 const notificationService = require('./utils/notificationService');
 
+const compression = require('compression');
+const rateLimit = require('express-rate-limit');
+
 const app = express();
 
+// Response Compression (Gzip/Brotli) for high throughput & fast UI loading
+// app.use(compression());
+
+// Performance Request Execution Timing Logger
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    if (duration > 200 && process.env.NODE_ENV !== 'test') {
+      console.warn(`[SLOW API WARN] ${req.method} ${req.originalUrl} - ${res.statusCode} (${duration}ms)`);
+    }
+  });
+  next();
+});
+
+// Rate limiting protection against abuse / DOS
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: process.env.NODE_ENV === 'test' ? 10000 : 1000, // 1000 requests per 15 mins
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many requests from this IP, please try again later.' },
+});
+
+app.use('/api', apiLimiter);
+
 // Middleware
-const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000')
+const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000,http://localhost:3001')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
@@ -20,11 +49,15 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Static uploads
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// Public unauthenticated routes
+app.use('/api/public', require('./routes/publicRoutes'));
+app.use('/api/patient-portal', require('./routes/patientPortal'));
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
@@ -61,6 +94,16 @@ app.use('/api/fluid-balance', require('./routes/fluidBalance'));
 app.use('/api/search', require('./routes/search'));
 app.use('/api/clinical-notes', require('./routes/clinicalNotes'));
 app.use('/api/notifications', require('./routes/notifications'));
+app.use('/api/vaccinations', require('./routes/vaccinations'));
+app.use('/api/referrals', require('./routes/referrals'));
+
+// Enterprise Phase Routes
+app.use('/fhir', require('./routes/fhir'));
+app.use('/api/cdss', require('./routes/cdss'));
+app.use('/api/search', require('./routes/globalSearch'));
+app.use('/api/mdm', require('./routes/mdm'));
+app.use('/api/observability', require('./routes/observability'));
+
 
 // Health check
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));
@@ -82,10 +125,19 @@ async function start() {
       && String(process.env.DB_AUTO_SYNC_ON_START || 'false').toLowerCase() === 'true';
 
     if (shouldAutoSync) {
-      await sequelize.sync();
+      await sequelize.sync({ alter: true });
       console.log('Models synced (auto-sync enabled).');
     } else {
       console.log('Auto-sync disabled. Run migrations to apply schema changes.');
+    }
+
+    try {
+      if (sequelize.getDialect() === 'postgres') {
+        await sequelize.query('ALTER TABLE "Doctors" ALTER COLUMN "signatureUrl" TYPE TEXT;');
+        await sequelize.query('ALTER TABLE "HospitalSettings" ADD COLUMN IF NOT EXISTS "doctorSignatureUrl" TEXT;');
+      }
+    } catch (schemaErr) {
+      console.log('Startup schema patch note:', schemaErr.message);
     }
 
     app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));

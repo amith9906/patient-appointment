@@ -4,6 +4,8 @@ import { patientAPI, reportAPI, appointmentAPI, pdfAPI, ipdAPI, treatmentPlanAPI
 import Badge from '../components/Badge';
 import Table from '../components/Table';
 import Modal from '../components/Modal';
+import VaccinationTracker from '../components/VaccinationTracker';
+import PatientQRCodeModal from '../components/PatientQRCodeModal';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
 
@@ -31,10 +33,20 @@ export default function PatientDetail() {
   const [packagesLoading, setPackagesLoading] = useState(false);
   const [assignForm, setAssignForm] = useState({ packagePlanId: '', startDate: todayStr(), notes: '' });
   const [assigning, setAssigning] = useState(false);
+  const [showQRModal, setShowQRModal] = useState(false);
+  const [doctors, setDoctors] = useState([]);
 
   useEffect(() => {
     patientAPI.getOne(id).then((r) => setPatient(r.data)).catch(() => navigate('/patients'));
     loadReports();
+    appointmentAPI.getAll({ limit: 50 }).then((r) => {
+      // extract doctors list
+      const docMap = {};
+      (r.data || []).forEach((a) => {
+        if (a.doctor) docMap[a.doctor.id] = a.doctor;
+      });
+      setDoctors(Object.values(docMap));
+    }).catch(() => {});
   }, [id]);
 
   useEffect(() => {
@@ -278,10 +290,17 @@ export default function PatientDetail() {
         <button className={styles.btnSecondary} onClick={() => navigate('/patients')}>← Back</button>
         <h2 className={styles.pageTitle}>{patient.name}</h2>
         <span style={{ fontFamily: 'monospace', background: '#dbeafe', color: '#1d4ed8', padding: '4px 10px', borderRadius: 6, fontSize: 13, fontWeight: 700 }}>{patient.patientId}</span>
+        <button
+          type="button"
+          onClick={() => setShowQRModal(true)}
+          style={{ background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0', padding: '4px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+        >
+          📱 Digital Health Pass / QR
+        </button>
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 20, borderBottom: '1px solid #e2e8f0', paddingBottom: 0 }}>
-        {[['info','Info'],['appointments','Appointments'],['reports','Reports'],['timeline','Timeline']].map(([t, label]) => (
+        {[['info','Info'],['appointments','Appointments'],['reports','Reports'],['vaccinations','💉 Vaccinations'],['timeline','Timeline']].map(([t, label]) => (
           <button key={t} onClick={() => { setTab(t); if (t === 'timeline' && timelineData.length === 0) loadTimeline(); }}
             style={{ padding: '8px 20px', border: 'none', borderBottom: tab === t ? '3px solid #2563eb' : '3px solid transparent', background: 'none', fontWeight: 600, fontSize: 14, color: tab === t ? '#2563eb' : '#64748b', cursor: 'pointer' }}>
             {label}
@@ -397,6 +416,16 @@ export default function PatientDetail() {
           </div>
           <div className={styles.card}><Table columns={reportCols} data={reports} loading={false} emptyMessage="No reports uploaded" /></div>
         </div>
+      )}
+
+      {tab === 'vaccinations' && (
+        <VaccinationTracker
+          patientId={patient.id}
+          patientDob={patient.dateOfBirth}
+          patientName={patient.name}
+          uhid={patient.patientId}
+          doctors={doctors}
+        />
       )}
 
       {tab === 'timeline' && (
@@ -596,6 +625,8 @@ export default function PatientDetail() {
           </div>
         )}
       </Modal>
+
+      {showQRModal && <PatientQRCodeModal patient={patient} onClose={() => setShowQRModal(false)} />}
     </div>
   );
 }

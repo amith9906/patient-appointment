@@ -15,7 +15,7 @@ import {
   Cell,
 } from 'recharts';
 import styles from './Page.module.css';
-import { appointmentAPI, expenseAPI, ipdAPI, patientAPI, packageAPI, doctorAPI } from '../services/api';
+import { appointmentAPI, expenseAPI, ipdAPI, patientAPI, packageAPI, doctorAPI, reportAPI } from '../services/api';
 
 const COLORS = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#dc2626', '#0891b2', '#64748b'];
 
@@ -51,6 +51,7 @@ export default function Analytics() {
   const [packageAnalytics, setPackageAnalytics] = useState(null);
   const [availabilitySummary, setAvailabilitySummary] = useState(null);
   const [revenueOverview, setRevenueOverview] = useState(null);
+  const [waitTimeData, setWaitTimeData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -76,8 +77,9 @@ export default function Analytics() {
       ipdAPI.getStats(commonParams).catch(() => ({ data: null })),
       doctorAPI.getAvailabilitySummary(commonParams).catch(() => ({ data: null })),
       appointmentAPI.getRevenueOverview(commonParams).catch(() => ({ data: null })),
+      reportAPI.getWaitTimes(commonParams).catch(() => ({ data: null })),
     ])
-      .then(([apptRes, expRes, refRes, ptRes, pkgRes, ipdRes, availRes, revRes]) => {
+      .then(([apptRes, expRes, refRes, ptRes, pkgRes, ipdRes, availRes, revRes, waitRes]) => {
         setData(apptRes.data);
         setExpData(expRes.data);
         setRefData(refRes.data);
@@ -86,6 +88,7 @@ export default function Analytics() {
         setIpdStats(ipdRes.data || null);
         setAvailabilitySummary(availRes.data || null);
         setRevenueOverview(revRes.data || null);
+        setWaitTimeData(waitRes.data || null);
       })
       .finally(() => setLoading(false));
   };
@@ -283,7 +286,7 @@ export default function Analytics() {
 
       {/* Tab selector */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {[['billing', 'Billing & Revenue'], ['revenue', 'Revenue Overview'], ['patients', 'Patient Insights']].map(([key, label]) => (
+        {[['billing', 'Billing & Revenue'], ['revenue', 'Revenue Overview'], ['patients', 'Patient Insights'], ['waittimes', 'Wait-Time Analytics']].map(([key, label]) => (
           <button
             key={key}
             type="button"
@@ -424,7 +427,9 @@ export default function Analytics() {
             const revByMonth = Object.fromEntries(monthWise.map(m => [m.month || m.label, Number(m.amount || 0)]));
             const expByMonth = Object.fromEntries((expData.monthWise || []).map(m => [m.month, Number(m.total || 0)]));
             const chartData = allMonths.map(m => ({
-              label: expData.monthWise.find(x => x.month === m).label || monthWise.find(x => (x.month || x.label) === m).label || m,
+              label: expData.monthWise.find(x => x.month === m)?.label
+                || monthWise.find(x => (x.month || x.label) === m)?.label
+                || m,
               revenue: revByMonth[m] || 0,
               expenses: expByMonth[m] || 0,
             }));
@@ -1195,6 +1200,99 @@ function PatientInsights({ ptData }) {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {tab === 'waittimes' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          {/* Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+              <div className="text-xs text-gray-500 font-medium">Avg Wait Time</div>
+              <div className="text-2xl font-bold text-blue-600 mt-1">
+                {waitTimeData?.summary?.avgWaitTimeMinutes ?? 0} <span className="text-sm font-normal text-gray-500">mins</span>
+              </div>
+              <div className="text-xs text-gray-400 mt-1">Check-in to Consultation</div>
+            </div>
+            <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+              <div className="text-xs text-gray-500 font-medium">Avg Consultation Duration</div>
+              <div className="text-2xl font-bold text-emerald-600 mt-1">
+                {waitTimeData?.summary?.avgConsultationDurationMinutes ?? 0} <span className="text-sm font-normal text-gray-500">mins</span>
+              </div>
+              <div className="text-xs text-gray-400 mt-1">Start to Completion</div>
+            </div>
+            <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+              <div className="text-xs text-gray-500 font-medium">Appointments Tracked</div>
+              <div className="text-2xl font-bold text-gray-800 mt-1">
+                {waitTimeData?.summary?.totalAppointments ?? 0}
+              </div>
+              <div className="text-xs text-gray-400 mt-1">Total in selected range</div>
+            </div>
+            <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+              <div className="text-xs text-gray-500 font-medium">Tracked Consultations</div>
+              <div className="text-2xl font-bold text-purple-600 mt-1">
+                {waitTimeData?.summary?.trackedConsultationsCount ?? 0}
+              </div>
+              <div className="text-xs text-gray-400 mt-1">With start & end timestamps</div>
+            </div>
+          </div>
+
+          {/* Day-wise Chart */}
+          <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
+            <h3 className="text-base font-semibold text-gray-800 mb-4">Daily Average Wait & Consultation Times</h3>
+            {waitTimeData?.dayWise?.length ? (
+              <div style={{ width: '100%', height: 300 }}>
+                <ResponsiveContainer>
+                  <BarChart data={waitTimeData.dayWise}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="label" />
+                    <YAxis unit=" min" />
+                    <Tooltip formatter={(value) => [`${value} mins`, '']} />
+                    <Legend />
+                    <Bar dataKey="avgWaitTimeMinutes" name="Avg Wait Time (min)" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="avgConsultationDurationMinutes" name="Avg Consultation (min)" fill="#16a34a" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <p className="text-gray-500 text-sm py-8 text-center">No queue timestamp data available for the selected period.</p>
+            )}
+          </div>
+
+          {/* Doctor-wise Breakdown Table */}
+          <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
+            <h3 className="text-base font-semibold text-gray-800 mb-4">Doctor-wise Wait Time & Consultation Performance</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr style={{ borderBottom: '2px solid #e2e8f0', background: '#f8fafc' }}>
+                    <th style={{ padding: '10px 12px', fontWeight: 600, color: '#475569' }}>Doctor Name</th>
+                    <th style={{ padding: '10px 12px', fontWeight: 600, color: '#475569' }}>Specialization</th>
+                    <th style={{ padding: '10px 12px', fontWeight: 600, color: '#475569', textAlign: 'right' }}>Total Appointments</th>
+                    <th style={{ padding: '10px 12px', fontWeight: 600, color: '#475569', textAlign: 'right' }}>Avg Wait Time (min)</th>
+                    <th style={{ padding: '10px 12px', fontWeight: 600, color: '#475569', textAlign: 'right' }}>Avg Consultation (min)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {waitTimeData?.doctorWise?.length ? (
+                    waitTimeData.doctorWise.map((doc, idx) => (
+                      <tr key={doc.doctorId} style={{ borderBottom: '1px solid #f1f5f9', background: idx % 2 === 0 ? 'white' : '#fafafa' }}>
+                        <td style={{ padding: '10px 12px', fontWeight: 600, color: '#1e293b' }}>{doc.doctorName}</td>
+                        <td style={{ padding: '10px 12px', color: '#64748b' }}>{doc.specialization}</td>
+                        <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600 }}>{doc.totalAppointments}</td>
+                        <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 700, color: '#2563eb' }}>{doc.avgWaitTimeMinutes} min</td>
+                        <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 700, color: '#16a34a' }}>{doc.avgConsultationDurationMinutes} min</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={5} style={{ padding: '16px', textAlign: 'center', color: '#94a3b8' }}>No doctor wait-time data found</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

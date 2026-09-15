@@ -1,4 +1,4 @@
-const { sequelize, Medication, MedicationBatch, StockLedgerEntry, Hospital } = require('../models');
+const { sequelize, Medication, MedicineCatalog, MedicationBatch, StockLedgerEntry, Hospital } = require('../models');
 const { Op, where: sqlWhere, col } = require('sequelize');
 const { ensureScopedHospital, isSuperAdmin } = require('../utils/accessScope');
 const { getPaginationParams, buildPaginationMeta, applyPaginationOptions } = require('../utils/pagination');
@@ -85,11 +85,14 @@ exports.getAll = async (req, res) => {
     } else if (stockStatus === 'expiring') {
       where.expiryDate = { [Op.gte]: todayStr, [Op.lte]: thresholdStr };
     }
-      const pagination = getPaginationParams(req, { defaultPerPage: 25, forcePaginate: req.query.paginate !== 'false' });
+      const pagination = getPaginationParams(req.query, { defaultPerPage: 25, forcePaginate: req.query.paginate !== 'false' });
       const baseOptions = {
         attributes: medicationAttributes,
         where,
-        include: [{ model: Hospital, as: 'hospital', attributes: ['id', 'name'] }],
+        include: [
+          { model: Hospital, as: 'hospital', attributes: ['id', 'name'] },
+          { model: MedicineCatalog, as: 'catalog' },
+        ],
         order: [['createdAt', 'DESC']],
       };
       if (pagination) {
@@ -113,7 +116,10 @@ exports.getOne = async (req, res) => {
     const medicationAttributes = await getMedicationSelectAttributes();
     const med = await Medication.findByPk(req.params.id, {
       attributes: medicationAttributes,
-      include: [{ model: Hospital, as: 'hospital', attributes: ['id', 'name'] }],
+      include: [
+        { model: Hospital, as: 'hospital', attributes: ['id', 'name'] },
+        { model: MedicineCatalog, as: 'catalog' },
+      ],
     });
     if (!med) return res.status(404).json({ message: 'Medication not found' });
     if (!isSuperAdmin(req.user) && med.hospitalId !== scope.hospitalId) {
@@ -283,7 +289,10 @@ exports.getExpiryAlerts = async (req, res) => {
     const medications = await Medication.findAll({
       attributes: medicationAttributes,
       where,
-      include: [{ model: Hospital, as: 'hospital', attributes: ['id', 'name'] }],
+      include: [
+        { model: Hospital, as: 'hospital', attributes: ['id', 'name'] },
+        { model: MedicineCatalog, as: 'catalog' },
+      ],
       order: [['expiryDate', 'ASC']],
     });
 
@@ -628,4 +637,124 @@ exports.updateStock = async (req, res) => {
     });
     res.json({ message: 'Stock updated', stockQuantity: newQty });
   } catch (err) { res.status(500).json({ message: err.message }); }
+};
+
+// GET /api/medications/search?q=<text>&itemType=<optional>&limit=15
+exports.search = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+
+    const { q = '', itemType, limit = 15 } = req.query;
+    const queryStr = String(q).trim();
+    if (queryStr.length < 2) {
+      return res.json([]);
+    }
+
+    const targetHospitalId = !isSuperAdmin(req.user)
+      ? scope.hospitalId
+      : (req.query.hospitalId || scope.hospitalId);
+
+    const searchLimit = Math.min(Math.max(parseInt(limit, 10) || 15, 1), 50);
+
+    const catalogWhere = {
+      [Op.or]: [
+        { name: { [Op.iLike]: `%${queryStr}%` } },
+        { genericName: { [Op.iLike]: `%${queryStr}%` } },
+        { composition: { [Op.iLike]: `%${queryStr}%` } },
+      ],
+    };
+
+    if (itemType && itemType !== 'all') {
+      catalogWhere.defaultItemType = itemType;
+    }
+
+    const stockWhere = { isActive: true };
+    if (targetHospitalId) {
+      stockWhere.hospitalId = targetHospitalId;
+    }
+
+    const catalogs = await MedicineCatalog.findAll({
+      where: catalogWhere,
+      include: [{
+        model: Medication,
+        as: 'tenantStock',
+        required: false,
+        where: stockWhere,
+      }],
+      order: [
+        [sequelize.literal(`CASE WHEN LOWER("MedicineCatalog"."name") LIKE '${queryStr.toLowerCase().replace(/'/g, "''")}%' THEN 0 ELSE 1 END`), 'ASC'],
+        ['name', 'ASC'],
+      ],
+      limit: searchLimit,
+    });
+
+    const results = catalogs.map((cat) => {
+      const stockItem = cat.tenantStock && cat.tenantStock.length > 0 ? cat.tenantStock[0] : null;
+      if (stockItem) {
+        return {
+          id: stockItem.id,
+          catalogId: cat.id,
+          name: cat.name,
+          genericName: cat.genericName,
+          composition: cat.composition,
+          manufacturer: cat.manufacturer,
+          itemType: stockItem.itemType || cat.defaultItemType,
+          unit: stockItem.unit || cat.defaultUnit,
+          stockQuantity: stockItem.stockQuantity,
+          reorderLevel: stockItem.reorderLevel,
+          unitPrice: stockItem.unitPrice,
+          isRestrictedDrug: cat.isRestrictedDrug,
+          notStocked: false,
+        };
+      } else {
+        return {
+          id: null,
+          catalogId: cat.id,
+          name: cat.name,
+          genericName: cat.genericName,
+          composition: cat.composition,
+          manufacturer: cat.manufacturer,
+          itemType: cat.defaultItemType,
+          unit: cat.defaultUnit,
+          isRestrictedDrug: cat.isRestrictedDrug,
+          notStocked: true,
+        };
+      }
+    });
+
+    res.json(results);
+  } catch (err) {
+    console.error('Medication search error:', err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// GET /api/medications/recent-prescribed
+exports.getRecentPrescribed = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+
+    const { Prescription, Appointment } = require('../models');
+
+    // Find recent distinct medications prescribed by this doctor/hospital
+    const recent = await Medication.findAll({
+      where: {
+        isActive: true,
+        hospitalId: scope.hospitalId || req.user.hospitalId,
+      },
+      attributes: [
+        'id', 'name', 'genericName', 'composition', 'itemType', 'unit',
+        'stockQuantity', 'reorderLevel', 'unitPrice', 'manufacturer'
+      ],
+      order: [['updatedAt', 'DESC']],
+      limit: 8,
+    });
+
+    res.json(recent);
+  } catch (err) {
+    console.error('getRecentPrescribed error:', err);
+    res.status(500).json({ message: err.message });
+  }
 };

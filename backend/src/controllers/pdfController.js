@@ -7,7 +7,9 @@ const {
   HospitalSettings,
   Prescription,
   Medication,
+  MedicineCatalog,
   LabTest,
+  LabReportTemplate,
   Lab,
   MedicineInvoice,
   MedicineInvoiceItem,
@@ -111,26 +113,69 @@ function drawHRule(doc, y) {
   doc.strokeColor('#000');
 }
 
-function drawHeader(doc, hospital, settings) {
+function drawHeader(doc, hospital, settings, doctor = null) {
+  const startY = doc.y;
   const name = hospital.name || 'Hospital';
   const addrParts = [hospital.address, hospital.city, hospital.state, hospital.zipCode].filter(Boolean);
   const addr = addrParts.join(', ');
   const phone = settings.phone || hospital.phone || '';
   const email = hospital.email || '';
 
-  doc.fontSize(18).font('Helvetica-Bold').text(name, { align: 'center' });
-  if (settings.tagline) doc.fontSize(10).font('Helvetica-Oblique').text(settings.tagline, { align: 'center' });
-  if (addr) doc.fontSize(9).font('Helvetica').text(addr, { align: 'center' });
+  const docName = doctor?.name
+    ? (doctor.name.startsWith('Dr.') ? doctor.name : `Dr. ${doctor.name}`)
+    : (settings.doctorName ? (settings.doctorName.startsWith('Dr.') ? settings.doctorName : `Dr. ${settings.doctorName}`) : '');
+  const docQual = doctor?.qualification || settings.doctorQualification || '';
+  const docSpec = doctor?.specialization || settings.doctorSpecialization || '';
+  const docReg = doctor?.licenseNumber || settings.doctorRegNumber || '';
 
-  const contactLine = [phone && `Ph: ${phone}`, email].filter(Boolean).join('  |  ');
-  if (contactLine) doc.fontSize(9).text(contactLine, { align: 'center' });
+  const hasDoctor = Boolean(docName);
 
-  if (settings.showGSTINOnReceipt && settings.gstin) {
-    const taxLine = [`GSTIN: ${settings.gstin}`, settings.pan && `PAN: ${settings.pan}`].filter(Boolean).join('  |  ');
-    doc.fontSize(8).text(taxLine, { align: 'center' });
+  if (hasDoctor) {
+    // 2-Column Professional Header
+    doc.fontSize(15).font('Helvetica-Bold').text(name, 50, startY, { width: 310 });
+    if (settings.tagline) doc.fontSize(8.5).font('Helvetica-Oblique').text(settings.tagline, 50, doc.y, { width: 310 });
+    if (addr) doc.fontSize(8).font('Helvetica').text(addr, 50, doc.y, { width: 310 });
+    const contactLine = [phone && `Ph: ${phone}`, email].filter(Boolean).join(' | ');
+    if (contactLine) doc.fontSize(8).text(contactLine, 50, doc.y, { width: 310 });
+    if (settings.showGSTINOnReceipt && settings.gstin) {
+      const taxLine = [`GSTIN: ${settings.gstin}`, settings.pan && `PAN: ${settings.pan}`].filter(Boolean).join(' | ');
+      doc.fontSize(7.5).text(taxLine, 50, doc.y, { width: 310 });
+    }
+
+    // Right side: Doctor Info
+    let rightY = startY;
+    doc.fontSize(11).font('Helvetica-Bold').fillColor('#1e293b').text(docName, 360, rightY, { width: 185, align: 'right' });
+    rightY = doc.y;
+    if (docQual) {
+      doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#334155').text(docQual, 360, rightY, { width: 185, align: 'right' });
+      rightY = doc.y;
+    }
+    if (docSpec) {
+      doc.fontSize(8).font('Helvetica').fillColor('#475569').text(docSpec, 360, rightY, { width: 185, align: 'right' });
+      rightY = doc.y;
+    }
+    if (docReg) {
+      doc.fontSize(7.5).font('Helvetica').fillColor('#64748b').text(`Reg / Lic No: ${docReg}`, 360, rightY, { width: 185, align: 'right' });
+      rightY = doc.y;
+    }
+    doc.fillColor('#000000');
+    doc.y = Math.max(doc.y, rightY) + 6;
+  } else {
+    // Single Centered Header
+    doc.fontSize(18).font('Helvetica-Bold').text(name, { align: 'center' });
+    if (settings.tagline) doc.fontSize(10).font('Helvetica-Oblique').text(settings.tagline, { align: 'center' });
+    if (addr) doc.fontSize(9).font('Helvetica').text(addr, { align: 'center' });
+
+    const contactLine = [phone && `Ph: ${phone}`, email].filter(Boolean).join('  |  ');
+    if (contactLine) doc.fontSize(9).text(contactLine, { align: 'center' });
+
+    if (settings.showGSTINOnReceipt && settings.gstin) {
+      const taxLine = [`GSTIN: ${settings.gstin}`, settings.pan && `PAN: ${settings.pan}`].filter(Boolean).join('  |  ');
+      doc.fontSize(8).text(taxLine, { align: 'center' });
+    }
+    if (settings.regNumber) doc.fontSize(8).text(`Reg: ${settings.regNumber}`, { align: 'center' });
+    if (settings.receiptHeader) doc.fontSize(9).font('Helvetica-Oblique').text(settings.receiptHeader, { align: 'center' });
   }
-  if (settings.regNumber) doc.fontSize(8).text(`Reg: ${settings.regNumber}`, { align: 'center' });
-  if (settings.receiptHeader) doc.fontSize(9).font('Helvetica-Oblique').text(settings.receiptHeader, { align: 'center' });
 
   doc.moveDown(0.5);
   drawHRule(doc);
@@ -140,15 +185,16 @@ function drawHeader(doc, hospital, settings) {
 function drawFooter(doc, settings, showSignature, appointmentOrDoctor) {
   doc.moveDown(1.5);
   if (showSignature && settings.showDoctorOnReceipt) {
-    const dName = appointmentOrDoctor?.doctor?.name || settings.doctorName;
+    const dName = appointmentOrDoctor?.doctor?.name ? `Dr. ${appointmentOrDoctor.doctor.name}` : settings.doctorName;
     const dQual = appointmentOrDoctor?.doctor?.qualification || settings.doctorQualification;
-    const dReg = settings.doctorRegNumber;
+    const dReg = appointmentOrDoctor?.doctor?.licenseNumber || settings.doctorRegNumber;
     if (dName) {
       const sigX = 370;
       doc.moveTo(sigX, doc.y).lineTo(545, doc.y).lineWidth(0.5).strokeColor('#555').stroke().strokeColor('#000');
       doc.fontSize(10).font('Helvetica-Bold').text(dName, sigX, doc.y + 2, { width: 175 });
-      if (dQual) doc.fontSize(9).font('Helvetica').text(dQual, sigX, doc.y, { width: 175 });
-      if (dReg) doc.fontSize(8).text(`Reg: ${dReg}`, sigX, doc.y, { width: 175 });
+      if (dQual) doc.fontSize(8.5).font('Helvetica').text(dQual, sigX, doc.y, { width: 175 });
+      if (dReg) doc.fontSize(8).text(`Reg / Lic No: ${dReg}`, sigX, doc.y, { width: 175 });
+      doc.fontSize(7.5).font('Helvetica-Oblique').fillColor('#64748b').text('Digitally Signed / Verified', sigX, doc.y, { width: 175 }).fillColor('#000');
     }
   }
   doc.moveDown(1);
@@ -172,9 +218,36 @@ function fmtDate(d) {
   return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+function cleanCurrency(curr) {
+  if (!curr || curr === '₹' || curr.includes('₹')) return 'Rs. ';
+  return curr.endsWith(' ') ? curr : `${curr} `;
+}
+
 function fmtMoney(val, currency) {
   const n = parseFloat(val) || 0;
-  return `${currency}${n.toFixed(2)}`;
+  const c = cleanCurrency(currency);
+  return `${c}${n.toFixed(2)}`;
+}
+
+function draw2ColMetaRows(doc, metaRows) {
+  doc.fontSize(9);
+  metaRows.forEach(([l1, v1, l2, v2]) => {
+    const curY = doc.y;
+    const h1 = doc.font('Helvetica').heightOfString(String(v1 || '—'), { width: 165 });
+    const h2 = doc.font('Helvetica').heightOfString(String(v2 || '—'), { width: 150 });
+    const rowH = Math.max(h1, h2, 12);
+
+    doc.font('Helvetica-Bold').text(String(l1 || ''), 50, curY, { width: 85 });
+    doc.font('Helvetica').text(String(v1 || '—'), 135, curY, { width: 165 });
+
+    if (l2) {
+      doc.font('Helvetica-Bold').text(String(l2 || ''), 310, curY, { width: 85 });
+      doc.font('Helvetica').text(String(v2 || '—'), 395, curY, { width: 150 });
+    }
+
+    doc.y = curY + rowH + 3;
+  });
+  doc.x = 50;
 }
 
 function normalizedTranslations(value) {
@@ -204,7 +277,10 @@ exports.generatePrescription = async (req, res) => {
         { model: Patient, as: 'patient' },
         {
           model: Prescription, as: 'prescriptions',
-          include: [{ model: Medication, as: 'medication' }],
+          include: [{
+            model: Medication, as: 'medication',
+            include: [{ model: MedicineCatalog, as: 'catalog' }],
+          }],
         },
       ],
     });
@@ -219,7 +295,7 @@ exports.generatePrescription = async (req, res) => {
     const currency = settings.currency || '₹';
 
     const doc = initDoc(res, `prescription-${appointment.appointmentNumber}.pdf`);
-    drawHeader(doc, hospital, settings);
+    drawHeader(doc, hospital, settings, doctor);
 
     // Title
     doc.fontSize(13).font('Helvetica-Bold').text('PRESCRIPTION', { align: 'center' });
@@ -267,16 +343,18 @@ exports.generatePrescription = async (req, res) => {
         const W = 495;  // full text width
 
         // ── Line 1: index + name + dosage + category (all as one text block)
-        const namePart = med?.name || '—';
+        const namePart = med?.catalog?.name || med?.name || '—';
+        const itemType = med?.catalog?.defaultItemType || med?.itemType || med?.category;
         const dosagePart = med?.dosage ? `  ${med.dosage}` : '';
-        const catPart = med?.category ? `  (${med.category})` : '';
+        const catPart = itemType ? `  (${itemType})` : '';
         doc.fontSize(10).font('Helvetica-Bold').fillColor('#000')
            .text(`${idx + 1}.  ${namePart}${dosagePart}${catPart}`, L, doc.y, { width: W });
 
         // ── Line 2: composition (blue italic)
-        if (med?.composition) {
+        const comp = med?.catalog?.composition || med?.composition;
+        if (comp) {
           doc.fontSize(8.5).font('Helvetica-Oblique').fillColor('#1d4ed8')
-             .text(`       Composition: ${med.composition}`, L, doc.y, { width: W });
+             .text(`       Composition: ${comp}`, L, doc.y, { width: W });
         }
 
         // ── Line 3: dose · frequency · timing · duration · qty
@@ -374,7 +452,7 @@ exports.generateBill = async (req, res) => {
     const currency = settings.currency || '₹';
 
     const doc = initDoc(res, `bill-${appointment.appointmentNumber}.pdf`);
-    drawHeader(doc, hospital, settings);
+    drawHeader(doc, hospital, settings, appointment.doctor);
 
     // Title + Bill info
     doc.fontSize(13).font('Helvetica-Bold').text('INVOICE / MEDICAL BILL', { align: 'center' });
@@ -510,7 +588,7 @@ exports.generateReceipt = async (req, res) => {
     const currency = settings.currency || '₹';
 
     const doc = initDoc(res, `receipt-${appointment.appointmentNumber}.pdf`);
-    drawHeader(doc, hospital, settings);
+    drawHeader(doc, hospital, settings, appointment.doctor);
 
     doc.fontSize(13).font('Helvetica-Bold').text('APPOINTMENT RECEIPT', { align: 'center' });
     doc.moveDown(0.3);
@@ -564,6 +642,7 @@ exports.generateLabReport = async (req, res) => {
           model: Appointment, as: 'appointment',
           include: [{ model: Doctor, as: 'doctor' }],
         },
+        { model: LabReportTemplate, as: 'template' },
       ],
     });
     if (!labTest) return res.status(404).json({ message: 'Lab test not found' });
@@ -574,7 +653,7 @@ exports.generateLabReport = async (req, res) => {
     const settings = await getSettings(hospital.id);
 
     const doc = initDoc(res, `lab-report-${labTest.testNumber}.pdf`);
-    drawHeader(doc, hospital, settings);
+    drawHeader(doc, hospital, settings, labTest.appointment?.doctor);
 
     // Lab info
     if (labTest.lab?.name) {
@@ -594,79 +673,157 @@ exports.generateLabReport = async (req, res) => {
       ['Doctor:', `Dr. ${labTest.appointment?.doctor?.name || '—'}`, 'Test Code:', labTest.testCode || '—'],
       ['Ordered:', fmtDate(labTest.orderedDate), 'Completed:', fmtDate(labTest.completedDate)],
     ];
-    doc.fontSize(9);
-    metaRows.forEach(([l1, v1, l2, v2]) => {
-      doc.font('Helvetica-Bold').text(l1, 50, doc.y, { width: 80, continued: true })
-         .font('Helvetica').text(v1, { width: 160, continued: true })
-         .font('Helvetica-Bold').text(l2, { width: 85, continued: true })
-         .font('Helvetica').text(v2, { width: 160 });
-    });
+    draw2ColMetaRows(doc, metaRows);
 
-    doc.moveDown(0.5);
+    doc.moveDown(0.3);
     drawHRule(doc);
     doc.moveDown(0.5);
 
     // Results section
-    doc.fontSize(11).font('Helvetica-Bold').text('Test Results');
+    doc.fontSize(11).font('Helvetica-Bold').text('Test Results', 50, doc.y);
     doc.moveDown(0.3);
 
-    // Result table headers
+    // Result table setup with border lines & grid
     const rCols = [170, 100, 110, 60, 55];
+    const colX = [50, 220, 320, 430, 490, 545];
     const rHeaders = ['Parameter', 'Result', 'Normal Range', 'Unit', 'Flag'];
-    const rhY = doc.y;
-    doc.fontSize(9).font('Helvetica-Bold');
-    let rx = 50;
-    rHeaders.forEach((h, i) => { doc.text(h, rx, rhY, { width: rCols[i] }); rx += rCols[i]; });
-    doc.moveDown(0.2);
-    drawHRule(doc);
-    doc.moveDown(0.3);
 
-    // Try parsing result as JSON for structured output, fallback to plain text
+    let tableStartY = doc.y;
+
+    const drawTableBorders = (startY, endY) => {
+      // Outer border box
+      doc.rect(50, startY, 495, endY - startY).lineWidth(0.75).strokeColor('#cbd5e1').stroke();
+      // Vertical column dividers
+      colX.slice(1, -1).forEach(x => {
+        doc.moveTo(x, startY).lineTo(x, endY).lineWidth(0.5).strokeColor('#e2e8f0').stroke();
+      });
+      doc.strokeColor('#000000');
+    };
+
+    const renderTableHeaders = () => {
+      tableStartY = doc.y;
+      const headerH = 22;
+      // Header background rectangle with border
+      doc.rect(50, tableStartY, 495, headerH).fillAndStroke('#f1f5f9', '#cbd5e1');
+      doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(9);
+
+      let rx = 50;
+      rHeaders.forEach((h, i) => {
+        doc.text(h, rx + 5, tableStartY + 6, { width: rCols[i] - 10, align: i === 4 ? 'center' : 'left' });
+        rx += rCols[i];
+      });
+
+      doc.fillColor('#000000');
+      doc.y = tableStartY + headerH;
+    };
+
+    renderTableHeaders();
+
+    const renderRow = (paramName, val, normalRange, unit, flag) => {
+      const h1 = doc.font('Helvetica').heightOfString(paramName, { width: rCols[0] - 10 });
+      const h2 = doc.font('Helvetica').heightOfString(val, { width: rCols[1] - 10 });
+      const rowH = Math.max(h1, h2, 14) + 6;
+
+      if (doc.y + rowH > 720) {
+        drawTableBorders(tableStartY, doc.y);
+        doc.addPage();
+        drawHeader(doc, hospital, settings, labTest.appointment?.doctor);
+        doc.fontSize(11).font('Helvetica-Bold').text('Test Results (Cont.)', 50, doc.y);
+        doc.moveDown(0.3);
+        renderTableHeaders();
+      }
+
+      const rowY = doc.y;
+      doc.font('Helvetica').fontSize(9).fillColor('#1e293b');
+
+      // Cell 0: Parameter
+      doc.text(paramName, 55, rowY + 4, { width: rCols[0] - 10 });
+      // Cell 1: Result
+      doc.text(val, 55 + rCols[0], rowY + 4, { width: rCols[1] - 10 });
+      // Cell 2: Normal Range
+      doc.text(normalRange, 55 + rCols[0] + rCols[1], rowY + 4, { width: rCols[2] - 10 });
+      // Cell 3: Unit
+      doc.text(unit, 55 + rCols[0] + rCols[1] + rCols[2], rowY + 4, { width: rCols[3] - 10 });
+      // Cell 4: Flag
+      if (flag === 'HIGH' || flag === 'LOW' || flag === 'ABN') {
+        doc.font('Helvetica-Bold').fillColor('#dc2626').text(flag, 55 + rCols[0] + rCols[1] + rCols[2] + rCols[3], rowY + 4, { width: rCols[4] - 10, align: 'center' }).fillColor('#000000');
+      } else {
+        doc.text(flag, 55 + rCols[0] + rCols[1] + rCols[2] + rCols[3], rowY + 4, { width: rCols[4] - 10, align: 'center' });
+      }
+
+      doc.fillColor('#000000');
+      const nextY = rowY + rowH;
+      // Draw horizontal line below row
+      doc.moveTo(50, nextY).lineTo(545, nextY).lineWidth(0.5).strokeColor('#e2e8f0').stroke();
+      doc.y = nextY;
+    };
+
     let resultsRendered = false;
-    if (labTest.result) {
+    const template = labTest.template;
+    const templateValues = labTest.templateValues || {};
+
+    if (template && Array.isArray(template.fields) && template.fields.length > 0) {
+      template.fields.forEach(field => {
+        if (!field) return;
+        const valRaw = templateValues[field.key];
+        const val = (valRaw !== undefined && valRaw !== null && String(valRaw).trim() !== '')
+          ? String(valRaw)
+          : '—';
+        const normalRange = field.normalRange || (field.normalMin != null && field.normalMax != null ? `${field.normalMin} - ${field.normalMax}` : '—');
+        const unit = field.unit || '—';
+
+        let flag = 'N';
+        if (val !== '—') {
+          const numVal = parseFloat(val);
+          if (!isNaN(numVal)) {
+            if (field.normalMin != null && numVal < field.normalMin) flag = 'LOW';
+            else if (field.normalMax != null && numVal > field.normalMax) flag = 'HIGH';
+          }
+        }
+
+        const paramName = field.label || field.key || '—';
+        renderRow(paramName, val, normalRange, unit, flag);
+      });
+      resultsRendered = true;
+    } else if (labTest.result) {
       try {
         const parsed = JSON.parse(labTest.result);
-        if (Array.isArray(parsed)) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
           parsed.forEach(row => {
             const flag = row.flag || (labTest.isAbnormal ? 'ABN' : 'N');
-            const cells = [row.parameter || '—', row.result || '—', row.normalRange || labTest.normalRange || '—', row.unit || labTest.unit || '—', flag];
-            const rowY = doc.y;
-            doc.font('Helvetica').fontSize(9);
-            rx = 50;
-            cells.forEach((cell, i) => { doc.text(cell, rx, rowY, { width: rCols[i] }); rx += rCols[i]; });
-            doc.moveDown(0.4);
+            renderRow(row.parameter || '—', String(row.result || '—'), row.normalRange || labTest.normalRange || '—', row.unit || labTest.unit || '—', flag);
           });
           resultsRendered = true;
         }
-      } catch (_) { /* not JSON, use plain text */ }
+      } catch (_) { /* not JSON */ }
     }
 
     if (!resultsRendered) {
-      // Single result row
+      // Single result fallback
       const flag = labTest.isAbnormal ? 'ABN' : 'N';
-      const cells = [labTest.testName, labTest.resultValue || labTest.result || '—', labTest.normalRange || '—', labTest.unit || '—', flag];
-      const rowY = doc.y;
-      doc.font('Helvetica').fontSize(9);
-      rx = 50;
-      cells.forEach((cell, i) => { doc.text(String(cell).slice(0, 50), rx, rowY, { width: rCols[i] }); rx += rCols[i]; });
-      doc.moveDown(0.4);
+      renderRow(labTest.testName, String(labTest.resultValue || labTest.result || '—'), labTest.normalRange || '—', labTest.unit || '—', flag);
     }
 
+    // Finish table borders
+    drawTableBorders(tableStartY, doc.y);
+
     // Status
-    doc.moveDown(0.3);
-    drawHRule(doc);
-    doc.moveDown(0.3);
-    doc.fontSize(9).font('Helvetica-Bold').text('Status: ', { continued: true })
+    doc.moveDown(0.5);
+    doc.fontSize(9).font('Helvetica-Bold').text('Status: ', 50, doc.y, { continued: true })
        .font('Helvetica').text(labTest.status?.replace(/_/g, ' ').toUpperCase() || '—');
     if (labTest.isAbnormal) {
-      doc.fontSize(9).font('Helvetica-Bold').fillColor('red').text('⚠ ABNORMAL RESULT — Please consult your doctor').fillColor('black');
+      doc.fontSize(9).font('Helvetica-Bold').fillColor('red').text('⚠ ABNORMAL RESULT — Please consult your doctor', 50, doc.y).fillColor('black');
     }
 
     // Technician notes
     if (labTest.technicianNotes) {
       doc.moveDown(0.3);
-      doc.fontSize(9).font('Helvetica-Bold').text('Technician Notes: ', { continued: true })
+      doc.fontSize(9).font('Helvetica-Bold').text('Technician Notes: ', 50, doc.y, { continued: true })
          .font('Helvetica').text(labTest.technicianNotes);
+    }
+
+    if (doc.y > 680) {
+      doc.addPage();
     }
 
     // Signature
@@ -683,6 +840,106 @@ exports.generateLabReport = async (req, res) => {
     if (!res.headersSent) res.status(500).json({ message: err.message });
   }
 };
+
+// ─── 4b. Lab Test Billing Receipt PDF ─────────────────────────────────────────
+exports.generateLabReceipt = async (req, res) => {
+  try {
+    const labTest = await LabTest.findByPk(req.params.labTestId, {
+      include: [
+        { model: Patient, as: 'patient' },
+        {
+          model: Lab, as: 'lab',
+          include: [{ model: Hospital, as: 'hospital' }],
+        },
+        {
+          model: Appointment, as: 'appointment',
+          include: [{ model: Doctor, as: 'doctor' }],
+        },
+      ],
+    });
+    if (!labTest) return res.status(404).json({ message: 'Lab test not found' });
+    if (!(await ensureLabReportAccess(req, res, labTest))) return;
+
+    const hospital = labTest.lab?.hospital;
+    if (!hospital) return res.status(400).json({ message: 'Hospital not found for lab test' });
+    const settings = await getSettings(hospital.id);
+    const currency = cleanCurrency(settings.currency);
+
+    const doc = initDoc(res, `lab-receipt-${labTest.testNumber}.pdf`);
+    drawHeader(doc, hospital, settings, labTest.appointment?.doctor);
+
+    doc.fontSize(13).font('Helvetica-Bold').text('LAB TEST RECEIPT / TAX INVOICE', { align: 'center' });
+    doc.moveDown(0.3);
+    drawHRule(doc);
+    doc.moveDown(0.5);
+
+    const patient = labTest.patient;
+    const metaRows = [
+      ['Receipt No:', `REC-${labTest.testNumber}`, 'Date:', fmtDate(labTest.orderedDate || labTest.createdAt)],
+      ['Patient Name:', patient?.name || '—', 'Patient ID:', patient?.patientId || '—'],
+      ['Phone:', patient?.phone || '—', 'Gender:', patient?.gender || '—'],
+      ['Lab Name:', labTest.lab?.name || '—', 'Status:', labTest.status?.replace(/_/g, ' ').toUpperCase() || 'PAID'],
+    ];
+
+    draw2ColMetaRows(doc, metaRows);
+
+    doc.moveDown(0.3);
+    drawHRule(doc);
+    doc.moveDown(0.5);
+
+    doc.fontSize(10).font('Helvetica-Bold').text('Billed Test Items', 50, doc.y);
+    doc.moveDown(0.3);
+
+    const rCols = [240, 90, 80, 85];
+    const colX = [50, 290, 380, 460, 545];
+    const rHeaders = ['Item Description', 'Category', 'Code', 'Amount'];
+    const tableStartY = doc.y;
+    const headerH = 22;
+
+    doc.rect(50, tableStartY, 495, headerH).fillAndStroke('#f1f5f9', '#cbd5e1');
+    doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(9);
+
+    let rx = 50;
+    rHeaders.forEach((h, i) => {
+      doc.text(h, rx + 5, tableStartY + 6, { width: rCols[i] - 10, align: i === 3 ? 'right' : 'left' });
+      rx += rCols[i];
+    });
+
+    doc.fillColor('#000000');
+    const rowY = tableStartY + headerH;
+    const price = parseFloat(labTest.price || 0);
+
+    doc.font('Helvetica').fontSize(9).fillColor('#1e293b');
+    doc.text(labTest.testName, 55, rowY + 5, { width: rCols[0] - 10 });
+    doc.text(labTest.category || 'Laboratory', 55 + rCols[0], rowY + 5, { width: rCols[1] - 10 });
+    doc.text(labTest.testCode || 'LAB-01', 55 + rCols[0] + rCols[1], rowY + 5, { width: rCols[2] - 10 });
+    doc.text(`${currency}${price.toFixed(2)}`, 55 + rCols[0] + rCols[1] + rCols[2], rowY + 5, { width: rCols[3] - 10, align: 'right' });
+
+    const endY = rowY + 24;
+    doc.moveTo(50, endY).lineTo(545, endY).lineWidth(0.5).strokeColor('#e2e8f0').stroke();
+
+    // Draw borders & grid
+    doc.rect(50, tableStartY, 495, endY - tableStartY).lineWidth(0.75).strokeColor('#cbd5e1').stroke();
+    colX.slice(1, -1).forEach(x => {
+      doc.moveTo(x, tableStartY).lineTo(x, endY).lineWidth(0.5).strokeColor('#e2e8f0').stroke();
+    });
+    doc.strokeColor('#000000');
+
+    doc.y = endY + 10;
+    const totY = doc.y;
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#000000');
+    doc.text('TOTAL AMOUNT PAID:', 280, totY, { width: 160, align: 'right' });
+    doc.text(`${currency}${price.toFixed(2)}`, 445, totY, { width: 100, align: 'right' });
+
+    doc.moveDown(1.5);
+    drawFooter(doc, settings, true);
+    doc.end();
+  } catch (err) {
+    console.error('Lab receipt PDF error:', err);
+    if (!res.headersSent) res.status(500).json({ message: err.message });
+  }
+};
+
 
 // ─── 5. Medicine Invoice PDF ─────────────────────────────────────────────────
 exports.generateMedicineInvoice = async (req, res) => {
@@ -755,13 +1012,18 @@ exports.generateMedicineInvoice = async (req, res) => {
       const y = doc.y;
       const med = item.medication;
       const medName = med?.name || 'Medicine';
-      const hsnCode = med?.hsnCode || '—';
+      const hsnCode = med?.hsnCode || item.hsnCode || '—';
+      const itemType = item.itemType || med?.itemType || med?.category || 'tablet';
+      const unit = item.unit || med?.unit || 'pcs';
+      const typeBadge = itemType && itemType !== 'tablet' ? ` (${itemType.replace(/_/g, ' ')})` : '';
+      const displayName = `${medName}${typeBadge}`;
+
       doc.font('Helvetica').fontSize(9);
-      doc.text(medName, colX[0], y, { width: cols[0] });
+      doc.text(displayName, colX[0], y, { width: cols[0] });
       doc.font('Helvetica').fontSize(8).fillColor('#475569')
          .text(hsnCode, colX[1], y + 1, { width: cols[1] });
       doc.fillColor('#000').fontSize(9);
-      doc.text(String(item.quantity || 0), colX[2], y, { width: cols[2], align: 'right' });
+      doc.text(`${item.quantity || 0} ${unit}`, colX[2], y, { width: cols[2], align: 'right' });
       doc.text(fmtMoney(item.unitPrice, currency), colX[3], y, { width: cols[3], align: 'right' });
       doc.text(`${Number(item.discountPct || 0).toFixed(1)}%`, colX[4], y, { width: cols[4], align: 'right' });
       doc.text(`${Number(item.taxPct || 0).toFixed(1)}%`, colX[5], y, { width: cols[5], align: 'right' });
@@ -773,10 +1035,15 @@ exports.generateMedicineInvoice = async (req, res) => {
     drawHRule(doc);
     doc.moveDown(0.3);
 
+    const cgstVal = parseFloat(invoice.cgstAmount || (invoice.taxAmount ? invoice.taxAmount / 2 : 0));
+    const sgstVal = parseFloat(invoice.sgstAmount || (invoice.taxAmount ? invoice.taxAmount / 2 : 0));
+    const igstVal = parseFloat(invoice.igstAmount || 0);
+
     const sumRows = [
       ['Subtotal', invoice.subtotal],
       ['Discount', invoice.discountAmount],
-      ['Tax', invoice.taxAmount],
+      invoice.isInterstate ? ['IGST Tax', igstVal] : ['CGST Tax', cgstVal],
+      ...(invoice.isInterstate ? [] : [['SGST Tax', sgstVal]]),
     ];
     sumRows.forEach(([label, value]) => {
       const y = doc.y;

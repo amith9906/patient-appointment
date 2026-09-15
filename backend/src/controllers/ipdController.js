@@ -2,7 +2,7 @@ const { Op } = require('sequelize');
 const {
   sequelize, IPDAdmission, IPDNote, IPDBillItem, IPDPayment, Room, Patient, Doctor,
   Hospital, PatientPackage, User, Nurse, Shift, NurseShiftAssignment, NursePatientAssignment,
-  Prescription, Medication, MedicationAdministration
+  Prescription, Medication, MedicationAdministration, IPDAdvanceDeposit
 } = require('../models');
 const { ensureScopedHospital, isSuperAdmin, getHODDepartmentId } = require('../utils/accessScope');
 const { getPaginationParams, buildPaginationMeta, applyPaginationOptions } = require('../utils/pagination');
@@ -290,7 +290,7 @@ exports.getAdmissions = async (req, res) => {
         if (!doctorId) where.doctorId = req.user.id;
       }
     }
-      const pagination = getPaginationParams(req, { defaultPerPage: 20, forcePaginate: req.query.paginate !== 'false' });
+      const pagination = getPaginationParams(req.query, { defaultPerPage: 20, forcePaginate: req.query.paginate !== 'false' });
       const baseOptions = {
         where,
         include: [
@@ -499,7 +499,7 @@ exports.getBill = async (req, res) => {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    const [billItems, payments] = await Promise.all([
+    const [billItems, payments, advanceDeposits] = await Promise.all([
       IPDBillItem.findAll({
         where: { admissionId: admission.id },
         include: [{ model: PatientPackage, as: 'package', attributes: ['id', 'purchaseAmount', 'status'] }],
@@ -510,21 +510,29 @@ exports.getBill = async (req, res) => {
         include: [{ model: User, as: 'recordedBy', attributes: ['id', 'name'] }],
         order: [['paymentDate', 'ASC'], ['createdAt', 'ASC']],
       }),
+      IPDAdvanceDeposit.findAll({
+        where: { admissionId: admission.id },
+        include: [{ model: User, as: 'createdBy', attributes: ['id', 'name'] }],
+        order: [['createdAt', 'ASC']],
+      }),
     ]);
 
     const subtotal = billItems.reduce((s, i) => s + parseFloat(i.amount || 0), 0);
     const gstTotal = billItems.reduce((s, i) => s + parseFloat(i.gstAmount || 0), 0);
     const billedAmount = subtotal + gstTotal;
     const paidAmount = payments.reduce((s, p) => s + parseFloat(p.amount || 0), 0);
+    const totalAdvances = advanceDeposits.reduce((s, a) => s + parseFloat(a.amount || 0), 0);
     const discountAmount = parseFloat(admission.discountAmount || 0);
-    const balance = billedAmount - discountAmount - paidAmount;
-    const paymentStatus = billedAmount > 0 && paidAmount >= (billedAmount - discountAmount) ? 'paid'
-                        : paidAmount > 0 ? 'partial' : 'pending';
+    const netPayable = Math.max(0, billedAmount - discountAmount);
+    const balance = netPayable - (paidAmount + totalAdvances);
+    const paymentStatus = billedAmount > 0 && (paidAmount + totalAdvances) >= netPayable ? 'paid'
+                        : (paidAmount + totalAdvances) > 0 ? 'partial' : 'pending';
 
     res.json({
       billItems,
       payments,
-      summary: { subtotal, gstTotal, billedAmount, discountAmount, paidAmount, balance, paymentStatus },
+      advanceDeposits,
+      summary: { subtotal, gstTotal, billedAmount, discountAmount, paidAmount, totalAdvances, balance, paymentStatus },
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -542,14 +550,32 @@ exports.addBillItem = async (req, res) => {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    const { itemType, description, quantity, unitPrice, gstRate, isPackageCovered, packageId, date, notes } = req.body;
+    const { itemType, description, quantity, unitPrice, gstRate, isPackageCovered, packageId, date, notes, isInterstate, sacCode } = req.body;
     if (!description) return res.status(400).json({ message: 'Description is required' });
 
     const qty = parseFloat(quantity) || 1;
     const price = parseFloat(unitPrice) || 0;
-    const rate = parseFloat(gstRate) || 0;
+    
+    // Auto-evaluate IPD room rent tax threshold (>5000/day = 5% GST; ICU/<=5000 = 0% Exempt)
+    let rate = gstRate !== undefined && gstRate !== null && gstRate !== '' ? parseFloat(gstRate) : 0;
+    if (itemType === 'room_charges' && (gstRate === undefined || gstRate === null || gstRate === '')) {
+      const isICU = /icu|ccu|critical/i.test(description || '');
+      if (!isICU && price > 5000) {
+        rate = 5.0; // 5% GST without ITC for high-end non-ICU rooms
+      } else {
+        rate = 0.0; // Exempt
+      }
+    }
+
+    const defaultSac = itemType === 'medication' ? '3004' : itemType === 'lab_test' ? '999313' : '999311';
+    const itemSacCode = sacCode || defaultSac;
+
     const amount = parseFloat((qty * price).toFixed(2));
     const gstAmount = parseFloat((amount * rate / 100).toFixed(2));
+    
+    const cgstAmount = isInterstate ? 0 : parseFloat((gstAmount / 2).toFixed(2));
+    const sgstAmount = isInterstate ? 0 : parseFloat((gstAmount / 2).toFixed(2));
+    const igstAmount = isInterstate ? gstAmount : 0;
     const totalWithGst = parseFloat((amount + gstAmount).toFixed(2));
 
     const item = await IPDBillItem.create({
@@ -557,7 +583,10 @@ exports.addBillItem = async (req, res) => {
       hospitalId: admission.hospitalId,
       itemType: itemType || 'other',
       description, quantity: qty, unitPrice: price, amount,
-      gstRate: rate, gstAmount, totalWithGst,
+      gstRate: rate, gstAmount,
+      sacCode: itemSacCode,
+      cgstAmount, sgstAmount, igstAmount,
+      totalWithGst,
       isPackageCovered: !!isPackageCovered,
       packageId: packageId || null,
       date: date || new Date().toISOString().slice(0, 10),
@@ -795,6 +824,69 @@ exports.getNursingHistory = async (req, res) => {
     });
 
     res.json(assignments);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.recordAdvanceDeposit = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+
+    const admission = await IPDAdmission.findByPk(req.params.id);
+    if (!admission) return res.status(404).json({ message: 'IPD Admission not found' });
+    if (!isSuperAdmin(req.user) && admission.hospitalId !== scope.hospitalId) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    const { amount, paymentMode, transactionRef, notes } = req.body;
+    const numAmount = parseFloat(amount);
+    if (isNaN(numAmount) || numAmount <= 0) {
+      return res.status(400).json({ message: 'Valid advance deposit amount is required' });
+    }
+
+    const deposit = await IPDAdvanceDeposit.create({
+      admissionId: admission.id,
+      hospitalId: admission.hospitalId,
+      patientId: admission.patientId,
+      amount: numAmount,
+      paymentMode: paymentMode || 'cash',
+      transactionRef: transactionRef || null,
+      notes: notes || null,
+      createdByUserId: req.user.id,
+    });
+
+    await recalculateBilling(admission.id);
+
+    const fullDeposit = await IPDAdvanceDeposit.findByPk(deposit.id, {
+      include: [{ model: User, as: 'createdBy', attributes: ['id', 'name'] }],
+    });
+
+    res.status(201).json(fullDeposit);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.getAdvanceDeposits = async (req, res) => {
+  try {
+    const scope = await ensureScopedHospital(req, res);
+    if (!scope.allowed) return;
+
+    const admission = await IPDAdmission.findByPk(req.params.id);
+    if (!admission) return res.status(404).json({ message: 'IPD Admission not found' });
+    if (!isSuperAdmin(req.user) && admission.hospitalId !== scope.hospitalId) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    const deposits = await IPDAdvanceDeposit.findAll({
+      where: { admissionId: admission.id },
+      include: [{ model: User, as: 'createdBy', attributes: ['id', 'name'] }],
+      order: [['createdAt', 'DESC']],
+    });
+
+    res.json(deposits);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

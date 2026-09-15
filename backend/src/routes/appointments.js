@@ -3,16 +3,17 @@ const c  = require('../controllers/appointmentController');
 const vc = require('../controllers/vitalsController');
 const bc = require('../controllers/billItemController');
 const { authenticate, authorize } = require('../middleware/auth');
+const { cacheMiddleware } = require('../utils/cache');
 
 router.use(authenticate);
-router.get('/today',      authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), c.getTodayAppointments);
-router.get('/queue',      authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), c.getQueue);
-router.get('/dashboard',  authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), c.getDashboardStats);
-router.get('/analytics',  authorize('super_admin', 'admin'), c.getBillingAnalytics);
-router.get('/revenue-overview', authorize('super_admin', 'admin'), c.getRevenueOverview);
-router.get('/patient-analytics', authorize('super_admin', 'admin'), c.getPatientAnalytics);
-router.get('/',           authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), c.getAll);
-router.get('/:id',        authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), c.getOne);
+router.get('/today',      authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), cacheMiddleware(60, 'appointments_today'), c.getTodayAppointments);
+router.get('/queue',      authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), cacheMiddleware(30, 'appointments_queue'), c.getQueue);
+router.get('/dashboard',  authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), cacheMiddleware(120, 'appointments_dashboard'), c.getDashboardStats);
+router.get('/analytics',  authorize('super_admin', 'admin'), cacheMiddleware(300, 'appointments_analytics'), c.getBillingAnalytics);
+router.get('/revenue-overview', authorize('super_admin', 'admin'), cacheMiddleware(300, 'appointments_revenue'), c.getRevenueOverview);
+router.get('/patient-analytics', authorize('super_admin', 'admin'), cacheMiddleware(300, 'appointments_patient_analytics'), c.getPatientAnalytics);
+router.get('/',           authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), cacheMiddleware(60, 'appointments_list'), c.getAll);
+router.get('/:id',        authorize('super_admin', 'admin', 'receptionist', 'doctor', 'lab_technician'), cacheMiddleware(120, 'appointments_detail'), c.getOne);
 router.post('/',          authorize('super_admin', 'admin', 'receptionist'), c.create);
 router.put('/:id',        authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.update);
 router.patch('/:id/check-in', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.checkIn);
@@ -20,11 +21,11 @@ router.patch('/:id/claim', authorize('super_admin', 'admin', 'receptionist'), c.
 router.put('/:id/cancel', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.cancel);
 
 // Vitals — any authed staff reads; receptionist + doctor can save/edit
-router.get('/:id/vitals', vc.getByAppointment);
+router.get('/:id/vitals', cacheMiddleware(120, 'vitals'), vc.getByAppointment);
 router.put('/:id/vitals', authorize('super_admin', 'admin', 'receptionist', 'doctor'), vc.upsert);
 
 // Bill items — get is open to all staff; save restricted to admin/receptionist/doctor; mark-paid to admin/receptionist
-router.get('/:id/bill-items',  bc.getByAppointment);
+router.get('/:id/bill-items',  cacheMiddleware(60, 'bill_items'), bc.getByAppointment);
 router.put('/:id/bill-items',  authorize('super_admin', 'admin', 'receptionist', 'doctor'), bc.saveItems);
 router.patch('/:id/mark-paid', authorize('super_admin', 'admin', 'receptionist'), bc.markPaid);
 

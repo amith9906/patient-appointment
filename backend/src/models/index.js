@@ -9,6 +9,7 @@ const Appointment = require('./Appointment');
 const DoctorAvailability = require('./DoctorAvailability');
 const Vitals = require('./Vitals');
 const Medication = require('./Medication');
+const MedicineCatalog = require('./MedicineCatalog');
 const Prescription = require('./Prescription');
 const Lab = require('./Lab');
 const LabTest = require('./LabTest');
@@ -48,6 +49,62 @@ const NurseHandover = require('./NurseHandover');
 const FluidBalance = require('./FluidBalance');
 const ClinicalNote = require('./ClinicalNote');
 const Notification = require('./Notification');
+const VaccinationSchedule = require('./VaccinationSchedule');
+const IPDAdvanceDeposit = require('./IPDAdvanceDeposit');
+const Referral = require('./Referral');
+const PatientOtp = require('./PatientOtp');
+
+// Phase 3 CDSS Models
+const DrugInteraction = require('./DrugInteraction')(sequelize);
+const DrugSafetyProfile = require('./DrugSafetyProfile')(sequelize);
+const DoseRangeRule = require('./DoseRangeRule')(sequelize);
+const ClinicalOverrideLog = require('./ClinicalOverrideLog')(sequelize);
+
+// Phase 4 Enterprise Search Model
+const GlobalSearchIndex = require('./GlobalSearchIndex')(sequelize);
+
+// Phase 6 MDM Models
+const MasterCatalog = require('./MasterCatalog')(sequelize);
+const CatalogVersion = require('./CatalogVersion')(sequelize);
+const CatalogSyncJob = require('./CatalogSyncJob')(sequelize);
+
+// Phase 8 Security Audit Models
+const SecurityEvent = require('./SecurityEvent')(sequelize);
+const AccessViolation = require('./AccessViolation')(sequelize);
+const DataAccessLog = require('./DataAccessLog')(sequelize);
+
+MasterCatalog.hasMany(CatalogVersion, { foreignKey: 'masterCatalogId' });
+CatalogVersion.belongsTo(MasterCatalog, { foreignKey: 'masterCatalogId' });
+
+
+// PatientOtp associations
+Patient.hasMany(PatientOtp, { foreignKey: 'phone', sourceKey: 'phone', as: 'otps' });
+
+// Referral associations
+Hospital.hasMany(Referral, { foreignKey: 'hospitalId', as: 'referrals' });
+Referral.belongsTo(Hospital, { foreignKey: 'hospitalId', as: 'hospital' });
+Patient.hasMany(Referral, { foreignKey: 'patientId', as: 'referrals' });
+Referral.belongsTo(Patient, { foreignKey: 'patientId', as: 'patient' });
+Doctor.hasMany(Referral, { foreignKey: 'referringDoctorId', as: 'outgoingReferrals' });
+Referral.belongsTo(Doctor, { foreignKey: 'referringDoctorId', as: 'referringDoctor' });
+Doctor.hasMany(Referral, { foreignKey: 'receivingDoctorId', as: 'incomingReferrals' });
+Referral.belongsTo(Doctor, { foreignKey: 'receivingDoctorId', as: 'receivingDoctor' });
+
+// IPDAdvanceDeposit associations
+IPDAdmission.hasMany(IPDAdvanceDeposit, { foreignKey: 'admissionId', as: 'advanceDeposits' });
+IPDAdvanceDeposit.belongsTo(IPDAdmission, { foreignKey: 'admissionId', as: 'admission' });
+Hospital.hasMany(IPDAdvanceDeposit, { foreignKey: 'hospitalId', as: 'ipdAdvanceDeposits' });
+IPDAdvanceDeposit.belongsTo(Hospital, { foreignKey: 'hospitalId', as: 'hospital' });
+Patient.hasMany(IPDAdvanceDeposit, { foreignKey: 'patientId', as: 'ipdAdvanceDeposits' });
+IPDAdvanceDeposit.belongsTo(Patient, { foreignKey: 'patientId', as: 'patient' });
+User.hasMany(IPDAdvanceDeposit, { foreignKey: 'createdByUserId', as: 'recordedAdvances' });
+IPDAdvanceDeposit.belongsTo(User, { foreignKey: 'createdByUserId', as: 'createdBy' });
+
+// Patient -> VaccinationSchedule (one-to-many)
+Patient.hasMany(VaccinationSchedule, { foreignKey: 'patientId', as: 'vaccinationSchedules' });
+VaccinationSchedule.belongsTo(Patient, { foreignKey: 'patientId', as: 'patient' });
+Doctor.hasMany(VaccinationSchedule, { foreignKey: 'administeredByDoctorId', as: 'vaccinationsAdministered' });
+VaccinationSchedule.belongsTo(Doctor, { foreignKey: 'administeredByDoctorId', as: 'administeredByDoctor' });
 
 // Hospital -> HospitalSettings (one-to-one)
 Hospital.hasOne(HospitalSettings, { foreignKey: 'hospitalId', as: 'settings' });
@@ -164,6 +221,10 @@ LabTest.belongsTo(LabReportTemplate, { foreignKey: 'templateId', as: 'template' 
 // Hospital -> Patient (one-to-many)
 Hospital.hasMany(Patient, { foreignKey: 'hospitalId', as: 'patients' });
 Patient.belongsTo(Hospital, { foreignKey: 'hospitalId', as: 'hospital' });
+
+// MedicineCatalog -> Medication (one-to-many)
+MedicineCatalog.hasMany(Medication, { foreignKey: 'catalogId', as: 'tenantStock' });
+Medication.belongsTo(MedicineCatalog, { foreignKey: 'catalogId', as: 'catalog' });
 
 // Hospital -> Medication (one-to-many)
 Hospital.hasMany(Medication, { foreignKey: 'hospitalId', as: 'medications' });
@@ -472,6 +533,7 @@ module.exports = {
   Appointment,
   Vitals,
   Medication,
+  MedicineCatalog,
   Prescription,
   Lab,
   LabTest,
@@ -512,4 +574,19 @@ module.exports = {
   FluidBalance,
   ClinicalNote,
   Notification,
+  VaccinationSchedule,
+  IPDAdvanceDeposit,
+  Referral,
+  PatientOtp,
+  DrugInteraction,
+  DrugSafetyProfile,
+  DoseRangeRule,
+  ClinicalOverrideLog,
+  GlobalSearchIndex,
+  MasterCatalog,
+  CatalogVersion,
+  CatalogSyncJob,
+  SecurityEvent,
+  AccessViolation,
+  DataAccessLog
 };

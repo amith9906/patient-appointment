@@ -200,7 +200,7 @@ exports.getAll = async (req, res) => {
         { phone: { [Op.iLike]: `%${search}%` } },
       ];
     }
-    const pagination = getPaginationParams(req, { defaultPerPage: 30, forcePaginate: req.query.paginate !== 'false' });
+    const pagination = getPaginationParams(req.query, { defaultPerPage: 30, forcePaginate: req.query.paginate !== 'false' });
     const baseOptions = {
       where,
       include: [{ model: Hospital, as: 'hospital', attributes: ['id', 'name'] }],
@@ -259,6 +259,17 @@ exports.create = async (req, res) => {
     if (!payload.phone?.trim()) return res.status(400).json({ message: 'phone is required' });
     if (!payload.hospitalId) return res.status(400).json({ message: 'hospitalId is required' });
     const patient = await Patient.create(payload);
+
+    if (patient.dateOfBirth) {
+      try {
+        const vaccinationController = require('./vaccinationController');
+        const mockRes = { json: () => {}, status: () => ({ json: () => {} }) };
+        await vaccinationController.getPatientVaccinations({ params: { patientId: patient.id } }, mockRes);
+      } catch (e) {
+        console.error('Vaccination auto-generation error:', e);
+      }
+    }
+
     res.status(201).json(patient);
   } catch (err) { res.status(400).json({ message: err.message }); }
 };
@@ -307,32 +318,48 @@ exports.getMedicalHistory = async (req, res) => {
     const scope = await ensureScopedHospital(req, res);
     if (!scope.allowed) return;
 
-    const { Prescription, Medication } = require('../models');
-    const patient = await Patient.findByPk(req.params.id, {
-      include: [
-        {
-          model: Appointment,
-          as: 'appointments',
-          include: [
-            { model: Doctor, as: 'doctor', attributes: ['id', 'name', 'specialization'] },
-            {
-              model: Prescription,
-              as: 'prescriptions',
-              include: [{ model: Medication, as: 'medication', attributes: ['id', 'name', 'dosage', 'category', 'composition'] }],
-            },
-            { model: Vitals, as: 'vitals' },
-          ],
-          order: [['appointmentDate', 'DESC'], ['appointmentTime', 'DESC']],
-        },
-        { model: LabTest, as: 'labTests' },
-        { model: Report, as: 'reports' },
-      ],
-    });
+    const patient = await Patient.findByPk(req.params.id);
     if (!patient) return res.status(404).json({ message: 'Patient not found' });
     if (!isSuperAdmin(req.user) && patient.hospitalId !== scope.hospitalId) {
       return res.status(403).json({ message: 'Access denied for this hospital patient' });
     }
-    res.json(patient);
+
+    const { Prescription, Medication } = require('../models');
+    const limit = req.query.limit === 'all' ? undefined : (parseInt(req.query.limit, 10) || 50);
+
+    const [appointments, labTests, reports] = await Promise.all([
+      Appointment.findAll({
+        where: { patientId: req.params.id },
+        limit,
+        order: [['appointmentDate', 'DESC'], ['appointmentTime', 'DESC']],
+        include: [
+          { model: Doctor, as: 'doctor', attributes: ['id', 'name', 'specialization'] },
+          {
+            model: Prescription,
+            as: 'prescriptions',
+            include: [{ model: Medication, as: 'medication', attributes: ['id', 'name', 'dosage', 'category', 'composition'] }],
+          },
+          { model: Vitals, as: 'vitals' },
+        ],
+      }),
+      LabTest.findAll({
+        where: { patientId: req.params.id },
+        limit,
+        order: [['createdAt', 'DESC']],
+      }),
+      Report.findAll({
+        where: { patientId: req.params.id },
+        limit,
+        order: [['createdAt', 'DESC']],
+      }),
+    ]);
+
+    const result = patient.toJSON();
+    result.appointments = appointments;
+    result.labTests = labTests;
+    result.reports = reports;
+
+    res.json(result);
   } catch (err) { res.status(500).json({ message: err.message }); }
 };
 
@@ -341,7 +368,13 @@ exports.getReferralAnalytics = async (req, res) => {
     const scope = await ensureScopedHospital(req, res);
     if (!scope.allowed) return;
 
-    const { from, to, referralSource, hospitalId } = req.query;
+    let { from, to, referralSource, hospitalId } = req.query;
+    if (!from && !to) {
+      const d = new Date();
+      d.setDate(d.getDate() - 30);
+      from = d.toISOString().slice(0, 10);
+    }
+
     const patientWhere = { isActive: true };
     if (isSuperAdmin(req.user)) {
       if (hospitalId) patientWhere.hospitalId = hospitalId;
@@ -355,28 +388,17 @@ exports.getReferralAnalytics = async (req, res) => {
 
     const patients = await Patient.findAll({
       where: patientWhere,
-      attributes: ['id', 'referralSource', 'referralDetail', 'createdAt'],
+      attributes: ['id', 'referralSource'],
+      raw: true,
     });
 
-    const patientIds = patients.map((p) => p.id);
-    const apptWhere = {};
-    if (from && to) apptWhere.appointmentDate = { [Op.between]: [from, to] };
-    else if (from) apptWhere.appointmentDate = { [Op.gte]: from };
-    else if (to) apptWhere.appointmentDate = { [Op.lte]: to };
-    if (patientIds.length > 0) apptWhere.patientId = { [Op.in]: patientIds };
-    else apptWhere.patientId = null;
-
-    const appointments = await Appointment.findAll({
-      where: apptWhere,
-      attributes: ['id', 'patientId', 'doctorId', 'status', 'fee', 'treatmentBill', 'appointmentDate'],
-      include: [{ model: Doctor, as: 'doctor', attributes: ['id', 'name'] }],
-    });
-
-    const map = new Map();
     const norm = (src) => String(src || 'Unknown').trim() || 'Unknown';
+    const map = new Map();
+    const patientSourceById = new Map();
 
     patients.forEach((p) => {
       const key = norm(p.referralSource);
+      patientSourceById.set(p.id, key);
       if (!map.has(key)) {
         map.set(key, {
           referralSource: key,
@@ -392,7 +414,28 @@ exports.getReferralAnalytics = async (req, res) => {
       map.get(key).totalPatients += 1;
     });
 
-    const patientSourceById = new Map(patients.map((p) => [p.id, norm(p.referralSource)]));
+    const patientIds = Array.from(patientSourceById.keys());
+    let appointments = [];
+
+    if (patientIds.length > 0) {
+      const apptWhere = {};
+      if (from && to) apptWhere.appointmentDate = { [Op.between]: [from, to] };
+      else if (from) apptWhere.appointmentDate = { [Op.gte]: from };
+      else if (to) apptWhere.appointmentDate = { [Op.lte]: to };
+
+      // Chunk patientIds in batches of 1000 to avoid parameter limit slowdowns
+      const CHUNK_SIZE = 1000;
+      for (let i = 0; i < patientIds.length; i += CHUNK_SIZE) {
+        const chunk = patientIds.slice(i, i + CHUNK_SIZE);
+        const chunkAppts = await Appointment.findAll({
+          where: { ...apptWhere, patientId: { [Op.in]: chunk } },
+          attributes: ['id', 'patientId', 'doctorId', 'status', 'fee', 'treatmentBill', 'appointmentDate'],
+          include: [{ model: Doctor, as: 'doctor', attributes: ['id', 'name'] }],
+        });
+        appointments.push(...chunkAppts);
+      }
+    }
+
     appointments.forEach((a) => {
       const key = patientSourceById.get(a.patientId) || 'Unknown';
       if (!map.has(key)) {
@@ -506,3 +549,4 @@ exports.getReferralAnalytics = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+

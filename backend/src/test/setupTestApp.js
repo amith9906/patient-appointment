@@ -5,8 +5,8 @@ const { sequelize } = require('../models');
 // build app similar to src/app.js but without starting server
 function buildApp() {
   const app = express();
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
+  app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   app.use('/uploads', express.static(path.join(__dirname, '../../uploads')));
 
   // mount routes (same as app.js)
@@ -43,8 +43,17 @@ function buildApp() {
   app.use('/api/fluid-balance', require('../routes/fluidBalance'));
   app.use('/api/search', require('../routes/search'));
   app.use('/api/clinical-notes', require('../routes/clinicalNotes'));
+  app.use('/api/vaccinations', require('../routes/vaccinations'));
+
+  // Enterprise Phase Routes
+  app.use('/fhir', require('../routes/fhir'));
+  app.use('/api/cdss', require('../routes/cdss'));
+  app.use('/api/search', require('../routes/globalSearch'));
+  app.use('/api/mdm', require('../routes/mdm'));
+  app.use('/api/observability', require('../routes/observability'));
 
   // health
+
   app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));
 
   return app;

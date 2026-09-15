@@ -3,16 +3,40 @@ import axios from 'axios';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 const api = axios.create({ baseURL: API_BASE_URL });
 
-// Attach token to every request
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
+let activeRequests = 0;
+const listeners = new Set();
 
-// Redirect to login on 401
+const notifyListeners = () => {
+  listeners.forEach((listener) => listener(activeRequests > 0, activeRequests));
+};
+
+export const subscribeToLoading = (listener) => {
+  listeners.add(listener);
+  listener(activeRequests > 0, activeRequests);
+  return () => listeners.delete(listener);
+};
+
+// Attach token & track request state
+api.interceptors.request.use(
+  (config) => {
+    activeRequests++;
+    notifyListeners();
+    const token = localStorage.getItem('token');
+    if (token) config.headers.Authorization = `Bearer ${token}`;
+    return config;
+  },
+  (error) => {
+    activeRequests = Math.max(0, activeRequests - 1);
+    notifyListeners();
+    return Promise.reject(error);
+  }
+);
+
+// Track response state & handles 401
 api.interceptors.response.use(
   (res) => {
+    activeRequests = Math.max(0, activeRequests - 1);
+    notifyListeners();
     if (
       res.data &&
       Object.prototype.hasOwnProperty.call(res.data, 'data') &&
@@ -24,7 +48,9 @@ api.interceptors.response.use(
     return res;
   },
   (err) => {
-    if (err.response.status === 401) {
+    activeRequests = Math.max(0, activeRequests - 1);
+    notifyListeners();
+    if (err.response && err.response.status === 401) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       window.location.href = '/login';
@@ -218,6 +244,15 @@ export const labReportTemplateAPI = {
   delete: (id) => api.delete(`/lab-report-templates/${id}`),
 };
 
+// Referrals
+export const referralAPI = {
+  getAll: (params) => api.get('/referrals', { params }),
+  getOne: (id) => api.get(`/referrals/${id}`),
+  create: (data) => api.post('/referrals', data),
+  update: (id, data) => api.put(`/referrals/${id}`, data),
+  delete: (id) => api.delete(`/referrals/${id}`),
+};
+
 // Users (admin)
 export const userAPI = {
   getAll: (params) => api.get('/users', { params }),
@@ -232,6 +267,7 @@ export const prescriptionAPI = {
   getByAppointment: (appointmentId) => api.get(`/prescriptions/appointment/${appointmentId}`),
   getMine: () => api.get('/prescriptions/my'),
   create: (data) => api.post('/prescriptions', data),
+  createBulk: (data) => api.post('/prescriptions/bulk', data),
   update: (id, data) => api.put(`/prescriptions/${id}`, data),
   delete: (id) => api.delete(`/prescriptions/${id}`),
 };
@@ -242,6 +278,7 @@ const fetchPatientReports = (patientId, params) => api.get(`/reports/patient/${p
 export const reportAPI = {
   getPatientReports: fetchPatientReports,
   getByPatient: fetchPatientReports,
+  getWaitTimes: (params) => api.get('/reports/wait-times', { params }),
   getOne: (id) => api.get(`/reports/${id}`),
   download: (id) => api.get(`/reports/${id}/download`, { responseType: 'blob' }),
   view: (id) => api.get(`/reports/${id}/view`, { responseType: 'blob' }),
@@ -271,6 +308,7 @@ export const pdfAPI = {
   bill: (appointmentId) => api.get(`/pdf/bill/${appointmentId}`, { responseType: 'blob' }),
   receipt: (appointmentId) => api.get(`/pdf/receipt/${appointmentId}`, { responseType: 'blob' }),
   labReport: (labTestId) => api.get(`/pdf/lab-report/${labTestId}`, { responseType: 'blob' }),
+  labReceipt: (labTestId) => api.get(`/pdf/lab-receipt/${labTestId}`, { responseType: 'blob' }),
   medicineInvoice: (invoiceId) => api.get(`/pdf/medicine-invoice/${invoiceId}`, { responseType: 'blob' }),
   medicineReturn: (returnId) => api.get(`/pdf/medicine-return/${returnId}`, { responseType: 'blob' }),
   purchaseReturn: (returnId) => api.get(`/pdf/purchase-return/${returnId}`, { responseType: 'blob' }),
@@ -279,6 +317,8 @@ export const pdfAPI = {
 
 // Vitals
 export const vitalsAPI = {
+  get: (appointmentId) => api.get(`/appointments/${appointmentId}/vitals`),
+  save: (appointmentId, data) => api.put(`/appointments/${appointmentId}/vitals`, data),
   record: (data) => api.post('/vitals', data),
   getHistory: (params) => api.get('/vitals/history', { params }),
   delete: (id) => api.delete(`/vitals/${id}`),
@@ -361,6 +401,8 @@ export const ipdAPI = {
   addPayment: (id, data) => api.post(`/ipd/${id}/bill/payments`, data),
   deletePayment: (id, paymentId) => api.delete(`/ipd/${id}/bill/payments/${paymentId}`),
   updateDiscount: (id, data) => api.patch(`/ipd/${id}/bill/discount`, data),
+  recordAdvance: (id, data) => api.post(`/ipd/${id}/advances`, data),
+  getAdvances: (id) => api.get(`/ipd/${id}/advances`),
   getNurses: (id) => api.get(`/ipd/${id}/nurses`),
   assignNurse: (id, data) => api.post(`/ipd/${id}/nurses`, data),
   removeNurse: (id, assignmentId) => api.delete(`/ipd/${id}/nurses/${assignmentId}`),

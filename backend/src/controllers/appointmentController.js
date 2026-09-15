@@ -1,4 +1,5 @@
 const {
+  sequelize,
   Appointment,
   Doctor,
   Patient,
@@ -167,7 +168,7 @@ exports.getAll = async (req, res) => {
       patientInclude.required = true;
     }
 
-    const pagination = getPaginationParams(req, { defaultPerPage: 20, forcePaginate: req.query.paginate !== 'false' });
+    const pagination = getPaginationParams(req.query, { defaultPerPage: 20, forcePaginate: req.query.paginate !== 'false' });
     const baseOptions = {
       where,
       include: [
@@ -390,6 +391,21 @@ exports.update = async (req, res) => {
       const validatedAssignment = await ensurePackageAssignable(nextAssignmentId, patient.id, patient.hospitalId);
       payload.patientPackageId = validatedAssignment ? validatedAssignment.id : null;
     }
+    if (req.body.status) {
+      if (['checked_in', 'confirmed'].includes(req.body.status) && !appt.checkedInAt) {
+        payload.checkedInAt = new Date();
+      }
+      if (['in_progress', 'in_consultation'].includes(req.body.status) && !appt.consultationStartedAt) {
+        payload.consultationStartedAt = new Date();
+      }
+      if (req.body.status === 'completed' && !appt.completedAt) {
+        payload.completedAt = new Date();
+      }
+    }
+    if (req.body.checkedInAt !== undefined) payload.checkedInAt = req.body.checkedInAt;
+    if (req.body.consultationStartedAt !== undefined) payload.consultationStartedAt = req.body.consultationStartedAt;
+    if (req.body.completedAt !== undefined) payload.completedAt = req.body.completedAt;
+
     await appt.update(payload);
     res.json(appt);
   } catch (err) { res.status(400).json({ message: err.message }); }
@@ -463,7 +479,7 @@ exports.getQueue = async (req, res) => {
       ...(isSuperAdmin(req.user) ? {} : { where: { hospitalId: scope.hospitalId } }),
     };
 
-    const pagination = getPaginationParams(req, { defaultPerPage: 25, forcePaginate: true });
+    const pagination = getPaginationParams(req.query, { defaultPerPage: 25, forcePaginate: true });
     const baseOptions = {
       where,
       include: [
@@ -535,7 +551,8 @@ exports.checkIn = async (req, res) => {
       : `${checkedInTag}${noteSuffix}`;
 
     const nextStatus = ['scheduled', 'postponed'].includes(appt.status) ? 'confirmed' : appt.status;
-    await appt.update({ status: nextStatus, notes: nextNotes });
+    const checkedInAt = appt.checkedInAt || now;
+    await appt.update({ status: nextStatus, notes: nextNotes, checkedInAt });
 
     const queueItems = await Appointment.findAll({
       where: {
@@ -608,7 +625,13 @@ exports.getBillingAnalytics = async (req, res) => {
     const scope = await ensureScopedHospital(req, res);
     if (!scope.allowed) return;
 
-    const { from, to } = req.query;
+    let { from, to } = req.query;
+    if (!from && !to) {
+      const d = new Date();
+      d.setDate(d.getDate() - 30);
+      from = d.toISOString().slice(0, 10);
+    }
+
     const where = { status: { [Op.notIn]: ['cancelled', 'no_show'] } };
     if (from && to) where.appointmentDate = { [Op.between]: [from, to] };
     else if (from) where.appointmentDate = { [Op.gte]: from };
@@ -752,14 +775,22 @@ exports.getBillingAnalytics = async (req, res) => {
     const billedApptIds = billedAppointments.map(a => a.id);
     const categoryMap = new Map();
     if (billedApptIds.length > 0) {
-      const billItems = await BillItem.findAll({ where: { appointmentId: billedApptIds } });
-      billItems.forEach(item => {
-        const cat = item.category || 'other';
-        if (!categoryMap.has(cat)) categoryMap.set(cat, { category: cat, total: 0, count: 0 });
-        const rec = categoryMap.get(cat);
-        rec.total += Number(item.amount || 0);
-        rec.count += 1;
-      });
+      const CHUNK_SIZE = 1000;
+      for (let i = 0; i < billedApptIds.length; i += CHUNK_SIZE) {
+        const chunk = billedApptIds.slice(i, i + CHUNK_SIZE);
+        const billItems = await BillItem.findAll({
+          where: { appointmentId: { [Op.in]: chunk } },
+          attributes: ['category', 'amount'],
+          raw: true,
+        });
+        billItems.forEach(item => {
+          const cat = item.category || 'other';
+          if (!categoryMap.has(cat)) categoryMap.set(cat, { category: cat, total: 0, count: 0 });
+          const rec = categoryMap.get(cat);
+          rec.total += Number(item.amount || 0);
+          rec.count += 1;
+        });
+      }
     }
     // Add consultation fee as a synthetic category entry
     if (totalConsultationAmount > 0) {
@@ -827,7 +858,13 @@ exports.getRevenueOverview = async (req, res) => {
     const scope = await ensureScopedHospital(req, res);
     if (!scope.allowed) return;
 
-    const { from, to } = req.query;
+    let { from, to } = req.query;
+    if (!from && !to) {
+      const d = new Date();
+      d.setDate(d.getDate() - 30);
+      from = d.toISOString().slice(0, 10);
+    }
+
     const isSA = isSuperAdmin(req.user);
     const hFilter = isSA ? {} : { hospitalId: scope.hospitalId };
 
@@ -943,7 +980,13 @@ exports.getPatientAnalytics = async (req, res) => {
     const scope = await ensureScopedHospital(req, res);
     if (!scope.allowed) return;
 
-    const { from, to } = req.query;
+    let { from, to } = req.query;
+    if (!from && !to) {
+      const d = new Date();
+      d.setDate(d.getDate() - 30);
+      from = d.toISOString().slice(0, 10);
+    }
+
     const where = {};
     if (from && to) where.appointmentDate = { [Op.between]: [from, to] };
     else if (from)  where.appointmentDate = { [Op.gte]: from };
@@ -989,26 +1032,32 @@ exports.getPatientAnalytics = async (req, res) => {
 
     const rangeStart = from ? new Date(from) : null;
 
-    // Determine first-ever appointment date for each patient (all-time, hospital scoped)
-    const allPatientAppts = await Appointment.findAll({
-      attributes: ['patientId', 'appointmentDate'],
-      include: [{
-        model: Doctor,
-        as: 'doctor',
-        attributes: ['hospitalId'],
-        ...(isSuperAdmin(req.user) ? {} : { where: { hospitalId: scope.hospitalId } }),
-      }],
-      order: [['appointmentDate', 'ASC']],
-    });
+    const uniquePatients = new Set(appts.map((a) => a.patientId).filter(Boolean));
+    const uniquePatientIds = Array.from(uniquePatients);
     const firstVisitMap = {};
-    for (const a of allPatientAppts) {
-      if (!firstVisitMap[a.patientId]) firstVisitMap[a.patientId] = a.appointmentDate;
+
+    if (uniquePatientIds.length > 0) {
+      const CHUNK_SIZE = 1000;
+      for (let i = 0; i < uniquePatientIds.length; i += CHUNK_SIZE) {
+        const chunk = uniquePatientIds.slice(i, i + CHUNK_SIZE);
+        const firstVisits = await Appointment.findAll({
+          attributes: [
+            'patientId',
+            [sequelize.fn('MIN', sequelize.col('appointmentDate')), 'firstVisitDate']
+          ],
+          where: { patientId: { [Op.in]: chunk } },
+          group: ['patientId'],
+          raw: true,
+        });
+        for (const fv of firstVisits) {
+          firstVisitMap[fv.patientId] = fv.firstVisitDate;
+        }
+      }
     }
 
     // Label each appointment's patient as new/returning within this range
     const seen = new Set();
     let newCount = 0, returningCount = 0;
-    const uniquePatients = new Set();
 
     // Monthly buckets
     const monthMap = {};

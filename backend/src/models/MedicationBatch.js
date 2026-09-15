@@ -9,7 +9,7 @@ const MedicationBatch = sequelize.define('MedicationBatch', {
   mfgDate: { type: DataTypes.DATEONLY },
   expiryDate: { type: DataTypes.DATEONLY, allowNull: false },
   purchaseDate: { type: DataTypes.DATEONLY },
-  quantityOnHand: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+  quantityOnHand: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
   unitCost: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
   isActive: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
   notes: { type: DataTypes.TEXT },

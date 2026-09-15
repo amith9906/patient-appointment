@@ -75,13 +75,15 @@ export default function DoctorDashboard() {
                 className="flex items-center gap-4 p-4 rounded-xl border border-gray-100 hover:border-teal-200 hover:bg-teal-50 transition-colors group">
                 <div className="text-center bg-teal-50 rounded-lg p-2 min-w-[52px] group-hover:bg-white transition-colors">
                   <div className="text-xs text-teal-500">TIME</div>
-                  <div className="font-bold text-teal-700">{a.appointmentTime.slice(0,5)}</div>
+                  <div className="font-bold text-teal-700">{a.appointmentTime ? a.appointmentTime.slice(0, 5) : '—'}</div>
                 </div>
                 <div className="flex-1">
-                  <div className="font-semibold text-gray-800">{a.patient.name}</div>
-                  <div className="text-sm text-gray-500">{a.type.replace('_',' ')}  |  {a.reason.slice(0,60)}</div>
+                  <div className="font-semibold text-gray-800">{a.patient?.name || 'Unknown Patient'}</div>
+                  <div className="text-sm text-gray-500">
+                    {(a.type || 'consultation').replace('_', ' ')}{a.reason ? `  |  ${a.reason.slice(0, 60)}` : ''}
+                  </div>
                 </div>
-                <span className={`text-xs px-2 py-1 rounded-full font-medium ${STATUS_COLORS[a.status] || 'bg-gray-100'}`}>{a.status.replace('_',' ')}</span>
+                <span className={`text-xs px-2 py-1 rounded-full font-medium ${STATUS_COLORS[a.status] || 'bg-gray-100'}`}>{(a.status || 'scheduled').replace('_', ' ')}</span>
               </Link>
             ))}
           </div>
@@ -94,12 +96,12 @@ export default function DoctorDashboard() {
           <h2 className="font-bold text-gray-800 text-lg mb-4">My Profile</h2>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             {[
-              ['License #', doctor.licenseNumber],
-              ['Experience', `${doctor.experience} years`],
-              ['Consultation Fee', `$${doctor.consultationFee}`],
-              ['Department', doctor.department.name],
-              ['Available', `${doctor.availableFrom.slice(0,5)} - ${doctor.availableTo.slice(0,5)}`],
-              ['Phone', doctor.phone],
+              ['License #', doctor.licenseNumber || '-'],
+              ['Experience', doctor.experience != null ? `${doctor.experience} years` : '-'],
+              ['Consultation Fee', doctor.consultationFee != null ? `$${doctor.consultationFee}` : '-'],
+              ['Department', doctor.department?.name || '-'],
+              ['Available', doctor.availableFrom && doctor.availableTo ? `${doctor.availableFrom.slice(0, 5)} - ${doctor.availableTo.slice(0, 5)}` : '-'],
+              ['Phone', doctor.phone || '-'],
             ].map(([label, value]) => (
               <div key={label} className="bg-gray-50 rounded-lg p-3">
                 <div className="text-xs text-gray-400 uppercase tracking-wide">{label}</div>

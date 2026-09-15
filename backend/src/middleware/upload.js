@@ -18,16 +18,16 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-  const allowed = ['.pdf', '.jpg', '.jpeg', '.png', '.doc', '.docx', '.xlsx', '.csv'];
+  const allowed = ['.pdf', '.jpg', '.jpeg', '.png', '.doc', '.docx', '.xlsx', '.csv', '.dcm', '.dicom'];
   const ext = path.extname(file.originalname).toLowerCase();
   if (allowed.includes(ext)) cb(null, true);
-  else cb(new Error('File type not allowed. Accepted: PDF, JPG, PNG, DOC, DOCX, XLSX, CSV'), false);
+  else cb(new Error('File type not allowed. Accepted: PDF, JPG, PNG, DOC, DOCX, XLSX, CSV, DCM, DICOM'), false);
 };
 
 const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB
 });
 
 module.exports = upload;

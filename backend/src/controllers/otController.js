@@ -49,7 +49,7 @@ exports.getAll = async (req, res) => {
       if (from) where.scheduledDate[Op.gte] = from;
       if (to) where.scheduledDate[Op.lte] = to;
     }
-      const pagination = getPaginationParams(req, { defaultPerPage: 15, forcePaginate: req.query.paginate !== 'false' });
+      const pagination = getPaginationParams(req.query, { defaultPerPage: 15, forcePaginate: req.query.paginate !== 'false' });
       const baseOptions = {
         where,
         include: [

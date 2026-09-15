@@ -25,7 +25,7 @@ exports.getAll = async (req, res) => {
     if (doctorId) where.doctorId = doctorId;
     if (status) where.status = status;
 
-      const pagination = getPaginationParams(req, { defaultPerPage: 20, forcePaginate: req.query.paginate !== 'false' });
+      const pagination = getPaginationParams(req.query, { defaultPerPage: 20, forcePaginate: req.query.paginate !== 'false' });
       const baseOptions = {
         where,
         include: INCLUDE,

@@ -75,7 +75,9 @@ exports.update = async (req, res) => {
     }
 
     const { password, ...rest } = req.body;
-    if (!isSuperAdmin(req.user)) {
+    if (isSuperAdmin(req.user)) {
+      if (rest.hospitalId === '') rest.hospitalId = null;
+    } else {
       delete rest.hospitalId;
       if (rest.role === 'super_admin') {
         return res.status(403).json({ message: 'Only super admin can assign super_admin role' });

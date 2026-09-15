@@ -20,95 +20,203 @@ const resolveNavIcon = (icon) => {
 const NAV_BY_ROLE = {
   super_admin: [
     { path: '/', label: 'Dashboard', icon: '📊' },
-    { path: '/hospitals', label: 'Hospitals', icon: 'Hospital' },
-    { path: '/departments', label: 'Departments', icon: '🏢' },
-    { path: '/doctors', label: 'Doctors', icon: '👨‍⚕️' },
-    { path: '/patients', label: 'Patients', icon: '🧑‍🤝‍🧑' },
-    { path: '/appointments', label: 'Appointments', icon: 'Calendar' },
-    { path: '/follow-ups', label: 'Follow-ups', icon: '🔔' },
-    { path: '/queue', label: 'Token Queue', icon: '🎫' },
-    { path: '/ipd', label: 'IPD', icon: '🏨' },
-    { path: '/ot', label: 'OT', icon: '🩺' },
-    { path: '/nurses', label: 'Nurses', icon: '👩‍⚕️' },
-    { path: '/shifts', label: 'Shifts', icon: '🕒' },
-    { path: '/billing', label: 'Billing', icon: '💰' },
-    { path: '/medicine-invoices', label: 'Medicine Invoices', icon: '🧾' },
-    { path: '/expenses', label: 'Expenses', icon: '💸' },
-    { path: '/treatment-plans', label: 'Treatment Plans', icon: '📋' },
-    { path: '/medications', label: 'Medications', icon: 'Rx' },
-    { path: '/vendors', label: 'Vendors', icon: '🏭' },
-    { path: '/stock', label: 'Stock Management', icon: '📦' },
-    { path: '/corporates', label: 'Corporate Accounts', icon: '🏢' },
-    { path: '/packages', label: 'Package Plans', icon: 'Bundle' },
-    { path: '/labs', label: 'Labs', icon: '🔬' },
-    { path: '/lab-report-templates', label: 'Lab Templates', icon: '🧪' },
-    { path: '/reports', label: 'Reports', icon: 'Report' },
-    { path: '/analytics', label: 'Analytics', icon: '📈' },
-    { path: '/users', label: 'User Management', icon: '👥' },
-    { path: '/settings', label: 'Settings', icon: '⚙️' },
+    {
+      group: 'Clinical Services',
+      icon: '🩺',
+      children: [
+        { path: '/patients', label: 'Patients', icon: '🧑‍🤝‍🧑' },
+        { path: '/appointments', label: 'Appointments', icon: 'Calendar' },
+        { path: '/queue', label: 'Token Queue', icon: '🎫' },
+        { path: '/follow-ups', label: 'Follow-ups', icon: '🔔' },
+        { path: '/ipd', label: 'IPD Management', icon: '🏨' },
+        { path: '/ot', label: 'OT Schedules', icon: '🩺' },
+        { path: '/treatment-plans', label: 'Treatment Plans', icon: '📋' },
+      ],
+    },
+    {
+      group: 'Pharmacy & Stock',
+      icon: '💊',
+      children: [
+        { path: '/medications', label: 'Medications', icon: 'Rx' },
+        { path: '/stock', label: 'Stock Management', icon: '📦' },
+        { path: '/vendors', label: 'Vendors & Suppliers', icon: '🏭' },
+      ],
+    },
+    {
+      group: 'Labs & Reports',
+      icon: '🔬',
+      children: [
+        { path: '/labs', label: 'Lab Orders', icon: '🔬' },
+        { path: '/lab-report-templates', label: 'Lab Templates', icon: '🧪' },
+        { path: '/reports', label: 'Diagnostic Reports', icon: 'Report' },
+      ],
+    },
+    {
+      group: 'Staff & Roster',
+      icon: '👨‍⚕️',
+      children: [
+        { path: '/doctors', label: 'Doctors', icon: '👨‍⚕️' },
+        { path: '/nurses', label: 'Nurses', icon: '👩‍⚕️' },
+        { path: '/shifts', label: 'Shift Roster', icon: '🕒' },
+        { path: '/departments', label: 'Departments', icon: '🏢' },
+        { path: '/hospitals', label: 'Hospitals', icon: 'Hospital' },
+      ],
+    },
+    {
+      group: 'Billing & Finance',
+      icon: '💰',
+      children: [
+        { path: '/billing', label: 'Patient Billing', icon: '💰' },
+        { path: '/medicine-invoices', label: 'Pharmacy Invoices', icon: '🧾' },
+        { path: '/expenses', label: 'Expenses', icon: '💸' },
+        { path: '/corporates', label: 'Corporate Accounts', icon: '🏢' },
+        { path: '/packages', label: 'Package Plans', icon: 'Bundle' },
+      ],
+    },
+    {
+      group: 'Admin & System',
+      icon: '⚙️',
+      children: [
+        { path: '/analytics', label: 'Analytics', icon: '📈' },
+        { path: '/users', label: 'User Management', icon: '👥' },
+        { path: '/settings', label: 'System Settings', icon: '⚙️' },
+      ],
+    },
   ],
   admin: [
     { path: '/', label: 'Dashboard', icon: '📊' },
-    { path: '/hospitals', label: 'Hospitals', icon: 'Hospital' },
-    { path: '/departments', label: 'Departments', icon: '🏢' },
-    { path: '/doctors', label: 'Doctors', icon: '👨‍⚕️' },
-    { path: '/patients', label: 'Patients', icon: '🧑‍🤝‍🧑' },
-    { path: '/appointments', label: 'Appointments', icon: 'Calendar' },
-    { path: '/follow-ups', label: 'Follow-ups', icon: '🔔' },
-    { path: '/queue', label: 'Token Queue', icon: '🎫' },
-    { path: '/ipd', label: 'IPD', icon: '🏨' },
-    { path: '/ot', label: 'OT', icon: '🩺' },
-    { path: '/nurse-dashboard', label: 'Nurse Dashboard', icon: '👩‍⚕️' },
-    { path: '/nurses', label: 'Nurses', icon: '👩‍⚕️' },
-    { path: '/shifts', label: 'Shifts', icon: '🕒' },
-    { path: '/billing', label: 'Billing', icon: '💰' },
-    { path: '/medicine-invoices', label: 'Medicine Invoices', icon: '🧾' },
-    { path: '/expenses', label: 'Expenses', icon: '💸' },
-    { path: '/treatment-plans', label: 'Treatment Plans', icon: '📋' },
-    { path: '/medications', label: 'Medications', icon: 'Rx' },
-    { path: '/vendors', label: 'Vendors', icon: '🏭' },
-    { path: '/stock', label: 'Stock Management', icon: '📦' },
-    { path: '/corporates', label: 'Corporate Accounts', icon: '🏢' },
-    { path: '/packages', label: 'Package Plans', icon: 'Bundle' },
-    { path: '/labs', label: 'Labs', icon: '🔬' },
-    { path: '/lab-report-templates', label: 'Lab Templates', icon: '🧪' },
-    { path: '/reports', label: 'Reports', icon: 'Report' },
-    { path: '/analytics', label: 'Analytics', icon: '📈' },
-    { path: '/users', label: 'User Management', icon: '👥' },
-    { path: '/settings', label: 'Settings', icon: '⚙️' },
+    {
+      group: 'Clinical Services',
+      icon: '🩺',
+      children: [
+        { path: '/patients', label: 'Patients', icon: '🧑‍🤝‍🧑' },
+        { path: '/appointments', label: 'Appointments', icon: 'Calendar' },
+        { path: '/queue', label: 'Token Queue', icon: '🎫' },
+        { path: '/follow-ups', label: 'Follow-ups', icon: '🔔' },
+        { path: '/ipd', label: 'IPD Management', icon: '🏨' },
+        { path: '/ot', label: 'OT Schedules', icon: '🩺' },
+        { path: '/treatment-plans', label: 'Treatment Plans', icon: '📋' },
+      ],
+    },
+    {
+      group: 'Pharmacy & Stock',
+      icon: '💊',
+      children: [
+        { path: '/medications', label: 'Medications', icon: 'Rx' },
+        { path: '/stock', label: 'Stock Management', icon: '📦' },
+        { path: '/vendors', label: 'Vendors & Suppliers', icon: '🏭' },
+      ],
+    },
+    {
+      group: 'Labs & Reports',
+      icon: '🔬',
+      children: [
+        { path: '/labs', label: 'Lab Orders', icon: '🔬' },
+        { path: '/lab-report-templates', label: 'Lab Templates', icon: '🧪' },
+        { path: '/reports', label: 'Diagnostic Reports', icon: 'Report' },
+      ],
+    },
+    {
+      group: 'Staff & Roster',
+      icon: '👨‍⚕️',
+      children: [
+        { path: '/doctors', label: 'Doctors', icon: '👨‍⚕️' },
+        { path: '/nurse-dashboard', label: 'Nurse Dashboard', icon: '👩‍⚕️' },
+        { path: '/nurses', label: 'Nurses', icon: '👩‍⚕️' },
+        { path: '/shifts', label: 'Shift Roster', icon: '🕒' },
+        { path: '/departments', label: 'Departments', icon: '🏢' },
+        { path: '/hospitals', label: 'Hospitals', icon: 'Hospital' },
+      ],
+    },
+    {
+      group: 'Billing & Finance',
+      icon: '💰',
+      children: [
+        { path: '/billing', label: 'Patient Billing', icon: '💰' },
+        { path: '/medicine-invoices', label: 'Pharmacy Invoices', icon: '🧾' },
+        { path: '/expenses', label: 'Expenses', icon: '💸' },
+        { path: '/corporates', label: 'Corporate Accounts', icon: '🏢' },
+        { path: '/packages', label: 'Package Plans', icon: 'Bundle' },
+      ],
+    },
+    {
+      group: 'Admin & System',
+      icon: '⚙️',
+      children: [
+        { path: '/analytics', label: 'Analytics', icon: '📈' },
+        { path: '/users', label: 'User Management', icon: '👥' },
+        { path: '/settings', label: 'System Settings', icon: '⚙️' },
+      ],
+    },
   ],
   receptionist: [
     { path: '/', label: 'Dashboard', icon: '📊' },
-    { path: '/appointments', label: 'Appointments', icon: 'Calendar' },
-    { path: '/queue', label: 'Token Queue', icon: '🎫' },
-    { path: '/ipd', label: 'IPD', icon: '🏨' },
-    { path: '/billing', label: 'Billing', icon: '💰' },
-    { path: '/medicine-invoices', label: 'Medicine Invoices', icon: '🧾' },
-    { path: '/patients', label: 'Patients', icon: '🧑‍🤝‍🧑' },
-    { path: '/doctors', label: 'Doctors', icon: '👨‍⚕️' },
-    { path: '/medications', label: 'Medications', icon: 'Rx' },
-    { path: '/corporates', label: 'Corporate Accounts', icon: '🏢' },
-    { path: '/packages', label: 'Package Plans', icon: 'Bundle' },
-    { path: '/reports', label: 'Reports', icon: 'Report' },
+    {
+      group: 'Clinical Services',
+      icon: '🩺',
+      children: [
+        { path: '/patients', label: 'Patients', icon: '🧑‍🤝‍🧑' },
+        { path: '/appointments', label: 'Appointments', icon: 'Calendar' },
+        { path: '/queue', label: 'Token Queue', icon: '🎫' },
+        { path: '/ipd', label: 'IPD Management', icon: '🏨' },
+        { path: '/doctors', label: 'Doctors List', icon: '👨‍⚕️' },
+      ],
+    },
+    {
+      group: 'Billing & Accounts',
+      icon: '💰',
+      children: [
+        { path: '/billing', label: 'Billing & Payments', icon: '💰' },
+        { path: '/medicine-invoices', label: 'Medicine Invoices', icon: '🧾' },
+        { path: '/corporates', label: 'Corporate Accounts', icon: '🏢' },
+        { path: '/packages', label: 'Package Plans', icon: 'Bundle' },
+      ],
+    },
+    {
+      group: 'Services & Reports',
+      icon: '📄',
+      children: [
+        { path: '/medications', label: 'Medications', icon: 'Rx' },
+        { path: '/reports', label: 'Reports', icon: 'Report' },
+      ],
+    },
   ],
   doctor: [
     { path: '/doctor-portal', label: 'My Dashboard', icon: '📊' },
-    { path: '/doctor-portal/hod/leaves', label: 'Leave Approvals', icon: 'Calendar' },
-    { path: '/doctor-portal/appointments', label: 'My Schedule', icon: 'Calendar' },
-    { path: '/nurse-dashboard', label: 'Nurse Dashboard', icon: '👩‍⚕️' },
-    { path: '/follow-ups', label: 'Follow-ups', icon: '🔔' },
-    { path: '/doctor-portal/patients', label: 'My Patients', icon: '🧑‍🤝‍🧑' },
-    { path: '/labs', label: 'Lab Tests', icon: '🔬' },
-    { path: '/medications', label: 'Medications', icon: 'Rx' },
-    { path: '/treatment-plans', label: 'Treatment Plans', icon: '📋' },
-    { path: '/ipd', label: 'IPD', icon: '🏨' },
-    { path: '/ot', label: 'OT', icon: '🩺' },
+    {
+      group: 'Patient Care',
+      icon: '🩺',
+      children: [
+        { path: '/doctor-portal/appointments', label: 'My Schedule', icon: 'Calendar' },
+        { path: '/doctor-portal/patients', label: 'My Patients', icon: '🧑‍🤝‍🧑' },
+        { path: '/follow-ups', label: 'Follow-ups', icon: '🔔' },
+        { path: '/ipd', label: 'IPD Patients', icon: '🏨' },
+        { path: '/ot', label: 'OT Schedules', icon: '🩺' },
+        { path: '/treatment-plans', label: 'Treatment Plans', icon: '📋' },
+      ],
+    },
+    {
+      group: 'Diagnostics & Roster',
+      icon: '🔬',
+      children: [
+        { path: '/labs', label: 'Lab Tests', icon: '🔬' },
+        { path: '/medications', label: 'Medications List', icon: 'Rx' },
+        { path: '/nurse-dashboard', label: 'Nurse Dashboard', icon: '👩‍⚕️' },
+        { path: '/doctor-portal/hod/leaves', label: 'Leave Approvals', icon: 'Calendar' },
+      ],
+    },
   ],
   nurse: [
     { path: '/nurse-portal', label: 'Duty Dashboard', icon: '🏥' },
-    { path: '/nurse-portal/patients', label: 'My Patients', icon: '🧑‍🤝‍🧑' },
-    { path: '/ipd', label: 'IPD Management', icon: '🏨' },
-    { path: '/medications', label: 'Medications', icon: 'Rx' },
+    {
+      group: 'Nursing Care',
+      icon: '🩺',
+      children: [
+        { path: '/nurse-portal/patients', label: 'My Patients', icon: '🧑‍🤝‍🧑' },
+        { path: '/ipd', label: 'IPD Management', icon: '🏨' },
+        { path: '/medications', label: 'Medications', icon: 'Rx' },
+      ],
+    },
   ],
   patient: [
     { path: '/patient-portal', label: 'My Dashboard', icon: '🏠' },
@@ -130,8 +238,13 @@ export default function Layout({ children }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const navItems = (NAV_BY_ROLE[user.role] || NAV_BY_ROLE.receptionist)
-    .filter((item) => item && item.path && item.label);
+  const navItems = NAV_BY_ROLE[user.role] || NAV_BY_ROLE.receptionist;
+  const [openGroups, setOpenGroups] = useState({});
+
+  const toggleGroup = (groupName) => {
+    setOpenGroups((prev) => ({ ...prev, [groupName]: !prev[groupName] }));
+  };
+
   const handleLogout = () => { logout(); navigate('/login'); };
 
   const [expiryAlerts, setExpiryAlerts] = useState([]);
@@ -232,7 +345,7 @@ export default function Layout({ children }) {
       }
     };
     loadPending();
-  }, [user.role, user.id, location.pathname]);
+  }, [user?.role, user?.id]);
 
   // Close bell dropdown on outside click
   useEffect(() => {
@@ -242,12 +355,39 @@ export default function Layout({ children }) {
     return () => document.removeEventListener('mousedown', handler);
   }, [bellOpen]);
 
-  const isActive = (path) => {
+  const isActive = useCallback((path) => {
+    if (!path) return false;
     if (['/', '/doctor-portal', '/patient-portal', '/lab-portal'].includes(path)) {
       return location.pathname === path;
     }
     return location.pathname === path || location.pathname.startsWith(`${path}/`);
-  };
+  }, [location.pathname]);
+
+  // Auto-expand active menu category
+  useEffect(() => {
+    const activeGroupNames = {};
+    const items = NAV_BY_ROLE[user.role] || NAV_BY_ROLE.receptionist;
+    items.forEach((item) => {
+      if (item.group && item.children) {
+        const isGroupActive = item.children.some((child) => isActive(child.path));
+        if (isGroupActive) {
+          activeGroupNames[item.group] = true;
+        }
+      }
+    });
+    setOpenGroups((prev) => ({ ...activeGroupNames, ...prev }));
+  }, [location.pathname, user.role, isActive]);
+
+  const activeHeaderTitle = (() => {
+    for (const item of navItems) {
+      if (item.path && isActive(item.path)) return item.label;
+      if (item.children) {
+        const found = item.children.find((c) => isActive(c.path));
+        if (found) return found.label;
+      }
+    }
+    return 'MediSchedule';
+  })();
 
   return (
     <div className={styles.layout}>
@@ -257,17 +397,60 @@ export default function Layout({ children }) {
           {!collapsed && <span className={styles.logoText}>MediSchedule</span>}
         </div>
         <nav className={styles.nav}>
-          {navItems.map((item) => (
-            <Link
-              key={item.path}
-              to={item.path}
-              onClick={() => setMobileOpen(false)}
-              className={`${styles.navItem} ${isActive(item.path) ? styles.active : ''}`}
-            >
-              <span className={styles.navIcon}>{resolveNavIcon(item.icon)}</span>
-              {!collapsed && <span className={styles.navLabel}>{item.label}</span>}
-            </Link>
-          ))}
+          {navItems.map((item, idx) => {
+            if (item.group && item.children) {
+              const isGroupActive = item.children.some((child) => isActive(child.path));
+              const isOpen = openGroups[item.group] !== false && (openGroups[item.group] || isGroupActive);
+
+              return (
+                <div key={item.group || idx} style={{ marginBottom: 4 }}>
+                  <div
+                    className={`${styles.navGroupHeader} ${isGroupActive ? styles.activeGroup : ''}`}
+                    onClick={() => toggleGroup(item.group)}
+                    title={collapsed ? item.group : undefined}
+                  >
+                    <div className={styles.groupLeft}>
+                      <span className={styles.navIcon}>{resolveNavIcon(item.icon)}</span>
+                      {!collapsed && <span className={styles.navLabel}>{item.group}</span>}
+                    </div>
+                    {!collapsed && (
+                      <span className={`${styles.chevron} ${isOpen ? styles.open : ''}`}>▼</span>
+                    )}
+                  </div>
+
+                  {(isOpen || collapsed) && (
+                    <div className={styles.navChildContainer}>
+                      {item.children.map((child) => (
+                        <Link
+                          key={child.path}
+                          to={child.path}
+                          onClick={() => setMobileOpen(false)}
+                          className={`${styles.navChildItem} ${isActive(child.path) ? styles.active : ''}`}
+                          title={collapsed ? child.label : undefined}
+                        >
+                          <span className={styles.navIcon}>{resolveNavIcon(child.icon)}</span>
+                          {!collapsed && <span className={styles.navLabel}>{child.label}</span>}
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            return (
+              <Link
+                key={item.path}
+                to={item.path}
+                onClick={() => setMobileOpen(false)}
+                className={`${styles.navItem} ${isActive(item.path) ? styles.active : ''}`}
+                title={collapsed ? item.label : undefined}
+              >
+                <span className={styles.navIcon}>{resolveNavIcon(item.icon)}</span>
+                {!collapsed && <span className={styles.navLabel}>{item.label}</span>}
+              </Link>
+            );
+          })}
         </nav>
         <button className={styles.collapseBtn} onClick={() => setCollapsed(!collapsed)}>
           {collapsed ? '->' : '←'}
@@ -280,7 +463,7 @@ export default function Layout({ children }) {
           <div className={styles.headerLeft}>
             <button className={styles.menuBtn} onClick={() => setMobileOpen((v) => !v)} aria-label="Open menu">List</button>
             <div className={styles.headerTitle}>
-              {navItems.find((n) => isActive(n.path))?.label || 'MediSchedule'}
+              {activeHeaderTitle}
             </div>
           </div>
           <div className={styles.headerRight}>

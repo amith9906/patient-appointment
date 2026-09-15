@@ -19,6 +19,10 @@ const IPDBillItem = sequelize.define('IPDBillItem', {
   amount: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },       // quantity * unitPrice
   gstRate: { type: DataTypes.DECIMAL(5, 2), defaultValue: 0 },       // percentage
   gstAmount: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },    // amount * gstRate / 100
+  sacCode: { type: DataTypes.STRING(20), defaultValue: '999311' },
+  cgstAmount: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
+  sgstAmount: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
+  igstAmount: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
   totalWithGst: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 }, // amount + gstAmount
   isPackageCovered: { type: DataTypes.BOOLEAN, defaultValue: false },
   packageId: { type: DataTypes.UUID, allowNull: true },

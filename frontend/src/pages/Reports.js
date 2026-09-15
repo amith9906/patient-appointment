@@ -4,6 +4,7 @@ import Modal from '../components/Modal';
 import Table from '../components/Table';
 import Badge from '../components/Badge';
 import SearchableSelect from '../components/SearchableSelect';
+import DicomViewer from '../components/DicomViewer';
 import { toast } from 'react-toastify';
 import styles from './Page.module.css';
 import PaginationControls from '../components/PaginationControls';
@@ -19,6 +20,7 @@ export default function Reports() {
   const [uploadModal, setUploadModal] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadForm, setUploadForm] = useState({ title: '', type: 'lab_report', description: '', file: null });
+  const [activeDicomReport, setActiveDicomReport] = useState(null);
 
   useEffect(() => { patientAPI.getAll({ paginate: 'false' }).then((r) => setPatients(r.data)); }, []);
 
@@ -92,12 +94,25 @@ export default function Reports() {
     { key: 'mimeType', label: 'Format', render: (v) => v.split('/')[1].toUpperCase() || '-' },
     { key: 'uploadedBy', label: 'Uploaded By' },
     { key: 'createdAt', label: 'Date', render: (v) => new Date(v).toLocaleDateString() },
-    { key: 'id', label: 'Actions', render: (_, r) => (
-      <div className={styles.actions}>
-        <button className={styles.btnEdit} onClick={() => handleDownload(r)}>Download</button>
-        <button className={styles.btnDelete} onClick={() => handleDelete(r.id)}>Delete</button>
-      </div>
-    )},
+    { key: 'id', label: 'Actions', render: (_, r) => {
+      const isDicom = r.mimeType === 'application/dicom' || (r.originalName && r.originalName.toLowerCase().endsWith('.dcm'));
+      const token = localStorage.getItem('token');
+      return (
+        <div className={styles.actions}>
+          {isDicom && (
+            <button
+              className={styles.btnEdit}
+              style={{ backgroundColor: '#0284c7', borderColor: '#0284c7', color: '#fff' }}
+              onClick={() => setActiveDicomReport({ ...r, token })}
+            >
+              👁️ View DICOM
+            </button>
+          )}
+          <button className={styles.btnEdit} onClick={() => handleDownload(r)}>Download</button>
+          <button className={styles.btnDelete} onClick={() => handleDelete(r.id)}>Delete</button>
+        </div>
+      );
+    }},
   ];
 
   return (
@@ -152,10 +167,10 @@ export default function Reports() {
             <div className={styles.field}>
               <label className={styles.label}>Select File *</label>
               <div style={{ border: '2px dashed #e2e8f0', borderRadius: 8, padding: '20px', textAlign: 'center', background: '#f8fafc' }}>
-                <input type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xlsx,.csv"
+                <input type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xlsx,.csv,.dcm,.dicom"
                   onChange={(e) => setUploadForm({ ...uploadForm, file: e.target.files[0] })}
                   required style={{ fontSize: 14 }} />
-                <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 8 }}>Supported: PDF, JPG, PNG, DOC, DOCX, XLSX, CSV (max 10MB)</div>
+                <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 8 }}>Supported: PDF, JPG, PNG, DICOM (.dcm), DOC, DOCX, XLSX, CSV (max 25MB)</div>
                 {uploadForm.file && <div style={{ marginTop: 8, fontSize: 13, color: '#2563eb', fontWeight: 600 }}>Selected: {uploadForm.file.name}</div>}
               </div>
             </div>
@@ -166,6 +181,15 @@ export default function Reports() {
           </div>
         </form>
       </Modal>
+
+      {activeDicomReport && (
+        <DicomViewer
+          fileUrl={`/api/reports/${activeDicomReport.id}/view`}
+          token={activeDicomReport.token}
+          title={activeDicomReport.title || activeDicomReport.originalName}
+          onClose={() => setActiveDicomReport(null)}
+        />
+      )}
     </div>
   );
 }

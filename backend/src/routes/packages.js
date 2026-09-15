@@ -2,9 +2,11 @@ const router = require('express').Router();
 const c = require('../controllers/packageController');
 const { authenticate, authorize } = require('../middleware/auth');
 
+const { cacheMiddleware } = require('../utils/cache');
+
 router.use(authenticate);
 
-router.get('/plans', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.getPlans);
+router.get('/plans', authorize('super_admin', 'admin', 'receptionist', 'doctor'), cacheMiddleware(180, 'package_plans'), c.getPlans);
 router.post('/plans', authorize('super_admin', 'admin', 'receptionist'), c.createPlan);
 router.put('/plans/:id', authorize('super_admin', 'admin', 'receptionist'), c.updatePlan);
 
@@ -14,6 +16,6 @@ router.get('/recommendation', authorize('super_admin', 'admin', 'receptionist', 
 router.post('/assignments', authorize('super_admin', 'admin', 'receptionist'), c.assignToPatient);
 router.patch('/assignments/:id/consume', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.consumeVisit);
 router.patch('/assignments/:id/status', authorize('super_admin', 'admin', 'receptionist'), c.updateAssignmentStatus);
-router.get('/patients/:patientId/assignments', authorize('super_admin', 'admin', 'receptionist', 'doctor', 'patient'), c.getPatientAssignments);
+router.get('/patients/:patientId/assignments', authorize('super_admin', 'admin', 'receptionist', 'doctor', 'patient'), cacheMiddleware(60, 'patient_packages'), c.getPatientAssignments);
 
 module.exports = router;

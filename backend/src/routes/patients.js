@@ -10,11 +10,15 @@ router.patch('/me/appointments/:id/cancel', authorize('patient'), c.cancelMyAppo
 router.patch('/me/appointments/:id/reschedule', authorize('patient'), c.rescheduleMyAppointment);
 router.get('/me/reports', authorize('patient'), c.getMyReports);
 router.post('/me/book', authorize('patient'), c.bookAppointment);
+const { cacheMiddleware } = require('../utils/cache');
+
 // Staff routes
 router.get('/', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.getAll);
-router.get('/analytics/referrals', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.getReferralAnalytics);
+router.get('/analytics/referrals', authorize('super_admin', 'admin', 'receptionist', 'doctor'), cacheMiddleware(180, 'referral_analytics'), c.getReferralAnalytics);
 router.get('/:id', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.getOne);
-router.get('/:id/history', authorize('super_admin', 'admin', 'receptionist', 'doctor'), c.getMedicalHistory);
+
+router.get('/:id/history', authorize('super_admin', 'admin', 'receptionist', 'doctor'), cacheMiddleware(60, 'patient_history'), c.getMedicalHistory);
+
 router.post('/', authorize('super_admin', 'admin', 'receptionist'), c.create);
 router.put('/:id', authorize('super_admin', 'admin', 'receptionist'), c.update);
 router.delete('/:id', authorize('super_admin', 'admin'), c.delete);

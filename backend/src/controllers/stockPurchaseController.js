@@ -34,7 +34,7 @@ exports.getAll = async (req, res) => {
       where.invoiceNumber = { [Op.iLike]: `%${search}%` };
     }
 
-      const pagination = getPaginationParams(req, { defaultPerPage: 25, forcePaginate: req.query.paginate !== 'false' });
+      const pagination = getPaginationParams(req.query, { defaultPerPage: 25, forcePaginate: req.query.paginate !== 'false' });
       const baseOptions = {
         where,
         include: [

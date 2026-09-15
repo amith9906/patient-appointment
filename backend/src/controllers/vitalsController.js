@@ -1,4 +1,5 @@
 const { Vitals, IPDAdmission, Appointment, Nurse } = require('../models');
+const { invalidatePrefix } = require('../utils/cache');
 
 const resolveNurseId = async (req) => {
   if (req.user?.role !== 'nurse') return null;
@@ -96,6 +97,7 @@ exports.upsert = async (req, res) => {
     const full = await Vitals.findByPk(vitals.id, {
       include: [{ model: Nurse, as: 'nurse', attributes: ['id', 'name'] }],
     });
+    invalidatePrefix('vitals');
     res.json(full);
   } catch (err) {
     res.status(500).json({ message: err.message });

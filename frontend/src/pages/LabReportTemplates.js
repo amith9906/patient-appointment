@@ -14,6 +14,35 @@ const labelToKey = (label) => label.toLowerCase().replace(/[^a-z0-9]+/g, '_').re
 // Pre-built common templates the admin can load as a starting point
 const STARTER_TEMPLATES = [
   {
+    name: 'Comprehensive Master Profile (CBC + LFT + KFT + Lipid)',
+    category: 'Biochemistry',
+    description: 'All-in-one full body executive panel combining CBC, LFT, KFT and Lipid profile',
+    fields: [
+      // CBC Section
+      { key: 'cbc_haemoglobin', label: 'CBC - Haemoglobin', unit: 'g/dL', normalRange: '12-16', normalMin: 12, normalMax: 16, type: 'number', options: '' },
+      { key: 'cbc_rbc', label: 'CBC - RBC Count', unit: 'x10⁶/µL', normalRange: '4.5-5.5', normalMin: 4.5, normalMax: 5.5, type: 'number', options: '' },
+      { key: 'cbc_wbc', label: 'CBC - WBC Count', unit: 'x10³/µL', normalRange: '4.5-11.0', normalMin: 4.5, normalMax: 11.0, type: 'number', options: '' },
+      { key: 'cbc_platelets', label: 'CBC - Platelet Count', unit: 'x10³/µL', normalRange: '150-400', normalMin: 150, normalMax: 400, type: 'number', options: '' },
+      // LFT Section
+      { key: 'lft_total_bilirubin', label: 'LFT - Total Bilirubin', unit: 'mg/dL', normalRange: '0.2-1.2', normalMin: 0.2, normalMax: 1.2, type: 'number', options: '' },
+      { key: 'lft_direct_bilirubin', label: 'LFT - Direct Bilirubin', unit: 'mg/dL', normalRange: '0-0.4', normalMin: 0, normalMax: 0.4, type: 'number', options: '' },
+      { key: 'lft_sgot', label: 'LFT - SGOT (AST)', unit: 'U/L', normalRange: '10-40', normalMin: 10, normalMax: 40, type: 'number', options: '' },
+      { key: 'lft_sgpt', label: 'LFT - SGPT (ALT)', unit: 'U/L', normalRange: '7-56', normalMin: 7, normalMax: 56, type: 'number', options: '' },
+      { key: 'lft_alkaline_phosphatase', label: 'LFT - Alkaline Phosphatase', unit: 'U/L', normalRange: '44-147', normalMin: 44, normalMax: 147, type: 'number', options: '' },
+      // KFT Section
+      { key: 'kft_creatinine', label: 'KFT - Serum Creatinine', unit: 'mg/dL', normalRange: '0.6-1.2', normalMin: 0.6, normalMax: 1.2, type: 'number', options: '' },
+      { key: 'kft_urea', label: 'KFT - Blood Urea (BUN)', unit: 'mg/dL', normalRange: '7-20', normalMin: 7, normalMax: 20, type: 'number', options: '' },
+      { key: 'kft_uric_acid', label: 'KFT - Uric Acid', unit: 'mg/dL', normalRange: '3.5-7.2', normalMin: 3.5, normalMax: 7.2, type: 'number', options: '' },
+      { key: 'kft_sodium', label: 'KFT - Sodium (Na+)', unit: 'mEq/L', normalRange: '136-145', normalMin: 136, normalMax: 145, type: 'number', options: '' },
+      { key: 'kft_potassium', label: 'KFT - Potassium (K+)', unit: 'mEq/L', normalRange: '3.5-5.0', normalMin: 3.5, normalMax: 5.0, type: 'number', options: '' },
+      // Lipid Section
+      { key: 'lipid_cholesterol', label: 'Lipid - Total Cholesterol', unit: 'mg/dL', normalRange: '< 200', normalMin: '', normalMax: 200, type: 'number', options: '' },
+      { key: 'lipid_triglycerides', label: 'Lipid - Triglycerides', unit: 'mg/dL', normalRange: '< 150', normalMin: '', normalMax: 150, type: 'number', options: '' },
+      { key: 'lipid_hdl', label: 'Lipid - HDL Cholesterol', unit: 'mg/dL', normalRange: '> 40', normalMin: 40, normalMax: '', type: 'number', options: '' },
+      { key: 'lipid_ldl', label: 'Lipid - LDL Cholesterol', unit: 'mg/dL', normalRange: '< 100', normalMin: '', normalMax: 100, type: 'number', options: '' },
+    ],
+  },
+  {
     name: 'Complete Blood Count (CBC)',
     category: 'Blood',
     description: 'Full blood count with differential',
@@ -306,6 +335,30 @@ export default function LabReportTemplates() {
     setForm(f => ({ ...f, name: starter.name, category: starter.category, description: starter.description, fields: starter.fields }));
   };
 
+  const appendStarter = (starter) => {
+    setForm((f) => {
+      const existingKeys = new Set((f.fields || []).map((field) => field.key));
+      const prefix = starter.name.split(' ')[0];
+      const newFields = (starter.fields || [])
+        .filter((field) => !existingKeys.has(field.key))
+        .map((field) => ({
+          ...field,
+          label: field.label.startsWith(prefix) ? field.label : `${prefix} - ${field.label}`,
+        }));
+
+      if (!newFields.length) {
+        toast.info(`All fields from ${starter.name} are already in this template.`);
+        return f;
+      }
+      toast.success(`Appended ${newFields.length} fields from ${starter.name}`);
+      return {
+        ...f,
+        description: f.description ? `${f.description} + ${starter.name}` : starter.description,
+        fields: [...(f.fields || []), ...newFields],
+      };
+    });
+  };
+
   const addField = () => {
     if (!fieldDraft.label.trim()) return toast.error('Field label is required');
     const key = fieldDraft.key.trim() || labelToKey(fieldDraft.label);
@@ -468,20 +521,29 @@ export default function LabReportTemplates() {
             </div>
 
             <form onSubmit={save} style={{ padding: 24 }}>
-              {/* Starter templates (only when creating) */}
-              {!editing && (
-                <div style={{ marginBottom: 20 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>Quick Start — Load a Preset</div>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    {STARTER_TEMPLATES.map(s => (
-                      <button key={s.name} type="button" onClick={() => loadStarter(s)}
-                        style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '5px 12px', fontSize: 12, cursor: 'pointer', color: '#1d4ed8', fontWeight: 500 }}>
+              {/* Starter & Panel Stacking Presets */}
+              <div style={{ marginBottom: 20, background: '#f8fafc', padding: 14, borderRadius: 12, border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    🧪 Quick Start & Multi-Report Preset Combiner
+                  </div>
+                  <span style={{ fontSize: 11, color: '#64748b' }}>Click "+ Append" to stack multiple tests (e.g. CBC + LFT + KFT)</span>
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {STARTER_TEMPLATES.map(s => (
+                    <div key={s.name} style={{ display: 'inline-flex', borderRadius: 8, border: '1px solid #bfdbfe', overflow: 'hidden' }}>
+                      <button type="button" onClick={() => loadStarter(s)} title={`Replace template with ${s.name}`}
+                        style={{ background: '#eff6ff', padding: '5px 10px', fontSize: 12, cursor: 'pointer', color: '#1d4ed8', fontWeight: 600, border: 'none', borderRight: '1px solid #bfdbfe' }}>
                         {s.name}
                       </button>
-                    ))}
-                  </div>
+                      <button type="button" onClick={() => appendStarter(s)} title={`Append fields from ${s.name} into current template`}
+                        style={{ background: '#dbeafe', padding: '5px 8px', fontSize: 11, cursor: 'pointer', color: '#1e40af', fontWeight: 700, border: 'none' }}>
+                        + Append
+                      </button>
+                    </div>
+                  ))}
                 </div>
-              )}
+              </div>
 
               {/* Basic info */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>

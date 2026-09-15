@@ -183,8 +183,15 @@ export default function LabDashboard() {
   const downloadReport = async (test) => {
     try {
       const res = await pdfAPI.labReport(test.id);
-      downloadBlob(res.data, `lab-report-${test.testNumber}.pdf`);
-    } catch { toast.error('Failed to download report'); }
+      downloadBlob(res.data, `lab-report-${test.testNumber || test.id}.pdf`);
+    } catch { toast.error('Failed to download report PDF'); }
+  };
+
+  const downloadReceipt = async (test) => {
+    try {
+      const res = await pdfAPI.labReceipt(test.id);
+      downloadBlob(res.data, `lab-receipt-${test.testNumber || test.id}.pdf`);
+    } catch { toast.error('Failed to download receipt PDF'); }
   };
 
   const viewUploadedReport = async (report) => {
@@ -393,7 +400,11 @@ export default function LabDashboard() {
                   <div className="flex gap-2 flex-wrap">
                     <button onClick={() => downloadReport(t)}
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 text-gray-700 text-xs font-medium rounded-lg hover:bg-gray-200 transition-colors">
-                      📄 Download PDF
+                      📄 Report PDF
+                    </button>
+                    <button onClick={() => downloadReceipt(t)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 text-xs font-medium rounded-lg hover:bg-blue-100 transition-colors">
+                      🧾 Billing Receipt PDF
                     </button>
                     <button onClick={() => openResultModal(t)}
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-medium rounded-lg hover:bg-indigo-100 transition-colors">
@@ -410,7 +421,7 @@ export default function LabDashboard() {
       {/* ===== Result Entry & Publish Modal ===== */}
       {resultModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-xl max-h-[92vh] flex flex-col">
+          <div className="bg-white rounded-2xl w-full max-w-5xl shadow-2xl max-h-[92vh] flex flex-col">
 
             {/* Header */}
             <div className="p-5 border-b flex-shrink-0">
@@ -499,20 +510,20 @@ export default function LabDashboard() {
                   </div>
 
                   {/* Column header */}
-                  <div className="grid bg-gray-50 border-b border-gray-100" style={{ gridTemplateColumns: '1fr 140px 60px 80px' }}>
-                    {['Parameter & Normal Range', 'Value', 'Unit', 'Flag'].map(h => (
+                  <div className="grid bg-gray-50 border-b border-gray-100" style={{ gridTemplateColumns: '1fr 240px 90px 90px' }}>
+                    {['Parameter & Normal Range', 'Value Input', 'Unit', 'Flag'].map(h => (
                       <div key={h} className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</div>
                     ))}
                   </div>
 
-                  <div className="divide-y divide-gray-50">
+                  <div className="divide-y divide-gray-50 max-h-[480px] overflow-y-auto">
                     {(selectedTemplate.fields || []).map((field, fi) => {
                       const val = templateValues[field.key] || '';
                       const isAbn = abnormalFields.includes(field.key);
                       return (
                         <div key={field.key}
                           className={`grid items-center ${isAbn ? 'bg-red-50' : fi % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}`}
-                          style={{ gridTemplateColumns: '1fr 140px 60px 80px' }}>
+                          style={{ gridTemplateColumns: '1fr 240px 90px 90px' }}>
                           {/* Label */}
                           <div className="px-3 py-2.5">
                             <div className="text-sm font-medium text-gray-800">{field.label}</div>
