@@ -39,8 +39,8 @@ module.exports = {
     await queryInterface.sequelize.query(`
       CREATE TABLE IF NOT EXISTS audit_logs (
         id UUID NOT NULL,
-        hospital_id INT REFERENCES "Hospitals"("id") ON DELETE SET NULL,
-        user_id INT,
+        hospital_id UUID REFERENCES "Hospitals"("id") ON DELETE SET NULL,
+        user_id UUID,
         user_role VARCHAR(50),
         action VARCHAR(100) NOT NULL,
         entity VARCHAR(100) NOT NULL,
@@ -56,7 +56,7 @@ module.exports = {
     await queryInterface.sequelize.query(`
       CREATE TABLE IF NOT EXISTS outbox_events (
         id UUID NOT NULL,
-        hospital_id INT,
+        hospital_id UUID,
         aggregate_type VARCHAR(100) NOT NULL,
         aggregate_id VARCHAR(100) NOT NULL,
         event_type VARCHAR(100) NOT NULL,
